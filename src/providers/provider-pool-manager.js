@@ -35,8 +35,8 @@ export class ProviderPoolManager {
         this.maxErrorCount = options.maxErrorCount ?? 10; // Default to 10 errors before marking unhealthy
         this.healthCheckInterval = options.healthCheckInterval ?? 10 * 60 * 1000; // Default to 10 minutes
 
-            // 日志级别控制
-        this.logLevel = options.logLevel || 'info'; // 'debug', 'info', 'warn', 'error'
+        // 日志级别控制（默认跟随全局 LOG_LEVEL）
+        this.logLevel = (options.logLevel || options.globalConfig?.LOG_LEVEL || 'info').toLowerCase(); // 'debug', 'info', 'warn', 'error'
         
         // 添加防抖机制，避免频繁的文件 I/O 操作
         this.saveDebounceTime = options.saveDebounceTime || 1000; // 默认1秒防抖
@@ -83,47 +83,170 @@ export class ProviderPoolManager {
      * 检查所有节点的配置文件，如果发现即将过期则触发刷新
      */
     async checkAndRefreshExpiringNodes() {
-        this._log('info', 'Checking nodes for approaching expiration dates using provider adapters...');
+        this._log('info', 'Checking nodes for approaching expiration dates using credential files...');
+        const summary = {
+            total: 0,
+            eligible: 0,
+            nearExpiry: 0,
+            enqueued: 0,
+            noCredentialFile: 0,
+            unknownExpiry: 0,
+            errors: 0,
+        };
+        const nearExpiryByProvider = {};
         
         for (const providerType in this.providerStatus) {
             const providers = this.providerStatus[providerType];
             for (const providerStatus of providers) {
+                summary.total++;
                 const config = providerStatus.config;
                 
-                // 根据 providerType 确定配置文件路径字段名
-                let configPath = null;
-                if (providerType.startsWith('claude-kiro')) {
-                    configPath = config.KIRO_OAUTH_CREDS_FILE_PATH;
-                } else if (providerType.startsWith('gemini-cli')) {
-                    configPath = config.GEMINI_OAUTH_CREDS_FILE_PATH;
-                } else if (providerType.startsWith('gemini-antigravity')) {
-                    configPath = config.ANTIGRAVITY_OAUTH_CREDS_FILE_PATH;
-                } else if (providerType.startsWith('openai-qwen')) {
-                    configPath = config.QWEN_OAUTH_CREDS_FILE_PATH;
-                } else if (providerType.startsWith('openai-iflow')) {
-                    configPath = config.IFLOW_OAUTH_CREDS_FILE_PATH;
-                } else if (providerType.startsWith('openai-codex')) {
-                    configPath = config.CODEX_OAUTH_CREDS_FILE_PATH;
-                }
-                
-                // logger.info(`Checking node ${providerStatus.uuid} (${providerType}) expiry date... configPath: ${configPath}`);
                 // 排除不健康和禁用的节点
                 if (!config.isHealthy || config.isDisabled) continue;
+                summary.eligible++;
+
+                const configPath = this._getCredentialConfigPath(providerType, config);
 
                 if (configPath && fs.existsSync(configPath)) {
                     try {
-                        if (true) {
+                        const isNearExpiry = this._isCredentialNearExpiry(providerType, configPath);
+                        if (isNearExpiry === null) {
+                            summary.unknownExpiry++;
+                            this._log('debug', `Node ${providerStatus.uuid} (${providerType}) expiry field not found or invalid. Skipping refresh.`);
+                            continue;
+                        }
+
+                        if (isNearExpiry) {
+                            summary.nearExpiry++;
+                            summary.enqueued++;
+                            nearExpiryByProvider[providerType] = (nearExpiryByProvider[providerType] || 0) + 1;
                             this._log('warn', `Node ${providerStatus.uuid} (${providerType}) is near expiration. Enqueuing refresh...`);
                             this._enqueueRefresh(providerType, providerStatus);
+                        } else {
+                            this._log('debug', `Node ${providerStatus.uuid} (${providerType}) is not near expiration. Skipping refresh.`);
                         }
                     } catch (err) {
+                        summary.errors++;
                         this._log('error', `Failed to check expiry for node ${providerStatus.uuid}: ${err.message}`);
                     }
                 } else {
+                    summary.noCredentialFile++;
                     this._log('debug', `Node ${providerStatus.uuid} (${providerType}) has no valid config file path or file does not exist.`);
                 }
             }
         }
+
+        const providerSummary = Object.entries(nearExpiryByProvider)
+            .map(([providerType, count]) => `${providerType}:${count}`)
+            .join(', ') || 'none';
+
+        this._log('info',
+            `Expiry scan summary: total=${summary.total}, eligible=${summary.eligible}, nearExpiry=${summary.nearExpiry}, ` +
+            `enqueued=${summary.enqueued}, noCredentialFile=${summary.noCredentialFile}, unknownExpiry=${summary.unknownExpiry}, errors=${summary.errors}`);
+        this._log('info', `Near-expiry accounts by provider: ${providerSummary}`);
+    }
+
+    /**
+     * 根据 providerType 获取凭证文件路径
+     * @private
+     */
+    _getCredentialConfigPath(providerType, config) {
+        if (providerType.startsWith('claude-kiro')) return config.KIRO_OAUTH_CREDS_FILE_PATH;
+        if (providerType.startsWith('gemini-cli')) return config.GEMINI_OAUTH_CREDS_FILE_PATH;
+        if (providerType.startsWith('gemini-antigravity')) return config.ANTIGRAVITY_OAUTH_CREDS_FILE_PATH;
+        if (providerType.startsWith('openai-qwen')) return config.QWEN_OAUTH_CREDS_FILE_PATH;
+        if (providerType.startsWith('openai-iflow')) return config.IFLOW_OAUTH_CREDS_FILE_PATH;
+        if (providerType.startsWith('openai-codex')) return config.CODEX_OAUTH_CREDS_FILE_PATH;
+        return null;
+    }
+
+    /**
+     * 获取不同提供商的接近过期阈值（分钟）
+     * @private
+     */
+    _getNearExpiryThresholdMinutes(providerType) {
+        if (providerType.startsWith('claude-kiro')) return 30;
+        if (providerType.startsWith('openai-iflow')) return 60 * 45;
+        return 20;
+    }
+
+    /**
+     * 将各种格式的过期时间转换为时间戳（毫秒）
+     * @private
+     */
+    _parseExpiryTimestamp(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return null;
+            }
+
+            if (/^\d+$/.test(trimmed)) {
+                const parsed = parseInt(trimmed, 10);
+                return Number.isFinite(parsed) ? parsed : null;
+            }
+
+            const normalized = trimmed.includes(' ') ? trimmed.replace(' ', 'T') : trimmed;
+            const withSeconds = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalized)
+                ? `${normalized}:00`
+                : normalized;
+            const parsed = new Date(withSeconds).getTime();
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+
+        if (value instanceof Date) {
+            const parsed = value.getTime();
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+
+        return null;
+    }
+
+    /**
+     * 从凭证内容中提取过期时间戳
+     * @private
+     */
+    _extractExpiryTimestamp(providerType, credentials) {
+        let rawExpiry = null;
+
+        if (providerType.startsWith('claude-kiro')) {
+            rawExpiry = credentials.expiresAt;
+        } else if (providerType.startsWith('openai-iflow')) {
+            rawExpiry = credentials.expiryDate ?? credentials.expiresAt ?? credentials.expired ?? credentials.expire ?? credentials.expires_at;
+        } else if (providerType.startsWith('openai-codex')) {
+            rawExpiry = credentials.expired ?? credentials.expire ?? credentials.expires_at ?? credentials.expiresAt ?? credentials.expiryDate;
+        } else {
+            rawExpiry = credentials.expiry_date ?? credentials.expiryDate ?? credentials.expiresAt;
+        }
+
+        return this._parseExpiryTimestamp(rawExpiry);
+    }
+
+    /**
+     * 判断凭证文件对应节点是否接近过期
+     * @private
+     */
+    _isCredentialNearExpiry(providerType, configPath) {
+        const content = fs.readFileSync(configPath, 'utf8');
+        const credentials = JSON.parse(content);
+        const expiryTimestamp = this._extractExpiryTimestamp(providerType, credentials);
+
+        // Codex 在缺失过期时间时默认按“需要刷新”处理，避免凭证长期失效
+        if (expiryTimestamp === null) {
+            return providerType.startsWith('openai-codex') ? true : null;
+        }
+
+        const nearMinutes = this._getNearExpiryThresholdMinutes(providerType);
+        const threshold = Date.now() + nearMinutes * 60 * 1000;
+        return expiryTimestamp <= threshold;
     }
 
     /**
@@ -481,7 +604,8 @@ export class ProviderPoolManager {
      */
     _log(level, message) {
         const levels = { debug: 0, info: 1, warn: 2, error: 3 };
-        if (levels[level] >= levels[this.logLevel]) {
+        const currentLevel = levels[this.logLevel] ?? levels.info;
+        if (levels[level] >= currentLevel) {
             logger[level](`[ProviderPoolManager] ${message}`);
         }
     }
@@ -1471,7 +1595,8 @@ export class ProviderPoolManager {
                 this._logHealthStatusChange(providerType, provider.config, 'unhealthy', 'healthy', null);
             }
             
-            this._log('info', `Marked provider as healthy: ${provider.config.uuid} for type ${providerType}${resetUsageCount ? ' (usage count reset)' : ''}`);
+            const logLevel = wasHealthy ? 'debug' : 'info';
+            this._log(logLevel, `Marked provider as healthy: ${provider.config.uuid} for type ${providerType}${resetUsageCount ? ' (usage count reset)' : ''}`);
             
             this._debouncedSave(providerType);
         }
@@ -1518,7 +1643,7 @@ export class ProviderPoolManager {
             provider.config.errorCount = 0;
             provider.config.usageCount = 0;
             provider.config._lastSelectionSeq = 0;
-            this._log('info', `Reset provider counters: ${provider.config.uuid} for type ${providerType}`);
+            this._log('debug', `Reset provider counters: ${provider.config.uuid} for type ${providerType}`);
             
             this._debouncedSave(providerType);
         }
@@ -1648,20 +1773,34 @@ export class ProviderPoolManager {
      * This method would typically be called periodically (e.g., via cron job).
      */
     async performHealthChecks(isInit = false) {
-        this._log('info', 'Performing health checks on all providers...');
+        this._log('info', `Performing health checks on all providers${isInit ? ' (startup)' : ''}...`);
         const now = new Date();
+        const summary = {
+            total: 0,
+            checked: 0,
+            success: 0,
+            recovered: 0,
+            failed: 0,
+            errors: 0,
+            skippedNoCheck: 0,
+            skippedScheduledRecovery: 0,
+            skippedRecentError: 0,
+        };
+        const skippedNoCheckByProvider = {};
         
         // 首先检查并恢复已到恢复时间的提供商
         this._checkAndRecoverScheduledProviders();
         
         for (const providerType in this.providerStatus) {
             for (const providerStatus of this.providerStatus[providerType]) {
+                summary.total++;
                 const providerConfig = providerStatus.config;
 
                 // 如果提供商有 scheduledRecoveryTime 且未到恢复时间，跳过健康检查
                 if (providerConfig.scheduledRecoveryTime && !providerConfig.isHealthy) {
                     const recoveryTime = new Date(providerConfig.scheduledRecoveryTime);
                     if (now < recoveryTime) {
+                        summary.skippedScheduledRecovery++;
                         this._log('debug', `Skipping health check for ${providerConfig.uuid} (${providerType}). Waiting for scheduled recovery at ${recoveryTime.toISOString()}`);
                         continue;
                     }
@@ -1670,6 +1809,7 @@ export class ProviderPoolManager {
                 // Only attempt to health check unhealthy providers after a certain interval
                 if (!providerStatus.config.isHealthy && providerStatus.config.lastErrorTime &&
                     (now.getTime() - new Date(providerStatus.config.lastErrorTime).getTime() < this.healthCheckInterval)) {
+                    summary.skippedRecentError++;
                     this._log('debug', `Skipping health check for ${providerConfig.uuid} (${providerType}). Last error too recent.`);
                     continue;
                 }
@@ -1679,13 +1819,18 @@ export class ProviderPoolManager {
                     const healthResult = await this._checkProviderHealth(providerType, providerConfig);
                     
                     if (healthResult === null) {
+                        summary.skippedNoCheck++;
+                        skippedNoCheckByProvider[providerType] = (skippedNoCheckByProvider[providerType] || 0) + 1;
                         this._log('debug', `Health check for ${providerConfig.uuid} (${providerType}) skipped: Check not implemented.`);
                         this.resetProviderCounters(providerType, providerConfig);
                         continue;
                     }
+                    summary.checked++;
                     
                     if (healthResult.success) {
+                        summary.success++;
                         if (!providerStatus.config.isHealthy) {
+                            summary.recovered++;
                             // Provider was unhealthy but is now healthy
                             // 恢复健康时不重置使用计数，保持原有值
                             this.markProviderHealthy(providerType, providerConfig, true, healthResult.modelName);
@@ -1697,6 +1842,7 @@ export class ProviderPoolManager {
                             this._log('debug', `Health check for ${providerConfig.uuid} (${providerType}): Still Healthy`);
                         }
                     } else {
+                        summary.failed++;
                         // Provider is not healthy
                         this._log('warn', `Health check for ${providerConfig.uuid} (${providerType}) failed: ${healthResult.errorMessage || 'Provider is not responding correctly.'}`);
                         this.markProviderUnhealthy(providerType, providerConfig, healthResult.errorMessage);
@@ -1709,11 +1855,23 @@ export class ProviderPoolManager {
                     }
 
                 } catch (error) {
+                    summary.errors++;
                     this._log('error', `Health check for ${providerConfig.uuid} (${providerType}) failed: ${error.message}`);
                     // If a health check fails, mark it unhealthy, which will update error count and lastErrorTime
                     this.markProviderUnhealthy(providerType, providerConfig, error.message);
                 }
             }
+        }
+
+        const noCheckSummary = Object.entries(skippedNoCheckByProvider)
+            .map(([providerType, count]) => `${providerType}:${count}`)
+            .join(', ') || 'none';
+        this._log('info',
+            `Health check summary: total=${summary.total}, checked=${summary.checked}, success=${summary.success}, recovered=${summary.recovered}, ` +
+            `failed=${summary.failed}, errors=${summary.errors}, skippedNoCheck=${summary.skippedNoCheck}, ` +
+            `skippedScheduledRecovery=${summary.skippedScheduledRecovery}, skippedRecentError=${summary.skippedRecentError}`);
+        if (summary.skippedNoCheck > 0) {
+            this._log('info', `Health check skipped(no checkHealth) by provider: ${noCheckSummary}`);
         }
     }
 
@@ -1914,4 +2072,3 @@ export class ProviderPoolManager {
     }
 
 }
-

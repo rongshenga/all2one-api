@@ -707,7 +707,7 @@ export const serviceInstances = {};
 // 服务适配器工厂
 export function getServiceAdapter(config) {
     const customNameDisplay = config.customName ? ` (${config.customName})` : '';
-    logger.info(`[Adapter] getServiceAdapter, provider: ${config.MODEL_PROVIDER}, uuid: ${config.uuid}${customNameDisplay}`);
+    logger.debug(`[Adapter] getServiceAdapter, provider: ${config.MODEL_PROVIDER}, uuid: ${config.uuid}${customNameDisplay}`);
     const provider = config.MODEL_PROVIDER;
     const providerKey = config.uuid ? provider + config.uuid : provider;
     
@@ -721,4 +721,3 @@ export function getServiceAdapter(config) {
     }
     return serviceInstances[providerKey];
 }
-

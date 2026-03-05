@@ -14,6 +14,8 @@ const PROVIDERS_WITHOUT_USAGE_DISPLAY = [
 
 // 提供商配置缓存
 let currentProviderConfigs = null;
+// 正在刷新中的提供商，避免重复触发
+const refreshingProviders = new Set();
 
 /**
  * 更新提供商配置
@@ -88,11 +90,14 @@ async function loadSupportedProviders() {
             const tag = document.createElement('span');
             tag.className = 'provider-tag';
             tag.textContent = getProviderDisplayName(providerId);
-            tag.title = t('usage.doubleClickToRefresh') || '双击刷新该提供商用量';
-            tag.setAttribute('data-i18n-title', 'usage.doubleClickToRefresh');
+            tag.title = t('usage.clickToRefreshConfirm') || '单击刷新该提供商用量（会二次确认）';
+            tag.setAttribute('data-i18n-title', 'usage.clickToRefreshConfirm');
             
-            // 添加双击事件
-            tag.addEventListener('dblclick', () => {
+            // 单击触发刷新，并做二次确认，避免误触
+            tag.addEventListener('click', () => {
+                const providerName = getProviderDisplayName(providerId);
+                const confirmed = window.confirm(t('usage.refreshProviderConfirm', { name: providerName }));
+                if (!confirmed) return;
                 refreshProviderUsage(providerId);
             });
             
@@ -327,6 +332,13 @@ export async function refreshProviderUsage(providerType) {
     const refreshBtn = document.getElementById('refreshUsageBtn');
     const contentEl = document.getElementById('usageContent');
 
+    if (refreshingProviders.has(providerType)) {
+        showToast(t('common.info'), t('usage.refreshProviderInProgress'), 'info');
+        return;
+    }
+
+    refreshingProviders.add(providerType);
+
     // 显示加载状态
     if (loadingEl) loadingEl.style.display = 'block';
     if (refreshBtn) refreshBtn.disabled = true;
@@ -358,6 +370,7 @@ export async function refreshProviderUsage(providerType) {
         console.error(`刷新提供商 ${providerType} 失败:`, error);
         showToast(t('common.error'), t('common.refresh.failed') + ': ' + error.message, 'error');
     } finally {
+        refreshingProviders.delete(providerType);
         if (loadingEl) loadingEl.style.display = 'none';
         if (refreshBtn) refreshBtn.disabled = false;
     }
@@ -410,6 +423,18 @@ function createProviderGroup(providerType, instances) {
         e.stopPropagation(); // 阻止事件冒泡到分组头部
         
         const cards = groupContainer.querySelectorAll('.usage-instance-card');
+        if (cards.length === 0) return;
+
+        // 分组折叠时，先展开分组并展开全部卡片，避免“点击无反馈”
+        if (groupContainer.classList.contains('collapsed')) {
+            groupContainer.classList.remove('collapsed');
+            cards.forEach(card => card.classList.remove('collapsed'));
+            const icon = toggleCardsBtn.querySelector('i');
+            icon.className = 'fas fa-compress-alt';
+            toggleCardsBtn.title = t('usage.group.collapseAll');
+            return;
+        }
+
         const allCollapsed = Array.from(cards).every(card => card.classList.contains('collapsed'));
         
         // 如果全部折叠，则全部展开；否则全部折叠

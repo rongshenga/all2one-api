@@ -617,7 +617,7 @@ function showCodexAuthMethodSelector(providerType) {
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 520px;">
             <div class="modal-header">
-                <h3><i class="fas fa-key"></i> Codex Authentication Method</h3>
+                <h3><i class="fas fa-key"></i> ${t('oauth.codex.selectMethod')}</h3>
                 <button class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
@@ -625,15 +625,15 @@ function showCodexAuthMethodSelector(providerType) {
                     <button class="auth-method-btn" data-method="oauth" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
                         <i class="fas fa-link" style="font-size: 24px; color: #d97706;"></i>
                         <div style="text-align: left;">
-                            <div style="font-weight: 600; color: #333;">OAuth Login</div>
-                            <div style="font-size: 12px; color: #666;">Open browser and authorize a single account.</div>
+                            <div style="font-weight: 600; color: #333;">${t('oauth.codex.oauth')}</div>
+                            <div style="font-size: 12px; color: #666;">${t('oauth.codex.oauthDesc')}</div>
                         </div>
                     </button>
                     <button class="auth-method-btn" data-method="batch-import" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
                         <i class="fas fa-file-import" style="font-size: 24px; color: #0ea5e9;"></i>
                         <div style="text-align: left;">
-                            <div style="font-weight: 600; color: #333;">Batch Import JSON</div>
-                            <div style="font-size: 12px; color: #666;">Import thousands of accounts from JSON payloads/files.</div>
+                            <div style="font-weight: 600; color: #333;">${t('oauth.codex.batchImport')}</div>
+                            <div style="font-size: 12px; color: #666;">${t('oauth.codex.batchImportDesc')}</div>
                         </div>
                     </button>
                 </div>
@@ -704,43 +704,45 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 680px;">
             <div class="modal-header">
-                <h3><i class="fas fa-file-import"></i> Codex Batch Import</h3>
+                <h3><i class="fas fa-file-import"></i> ${t('oauth.codex.batchImportTitle')}</h3>
                 <button class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div style="margin-bottom: 16px; padding: 12px; background: #ecfeff; border: 1px solid #bae6fd; border-radius: 8px; color: #0c4a6e; font-size: 13px;">
-                    Supports automatic field recognition for Codex credentials. Required minimal field: <code>access_token</code>.
+                    ${t('oauth.codex.batchImportHint')}
                 </div>
                 <div style="margin-bottom: 12px; padding: 10px 12px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; color: #334155; font-size: 12px;">
-                    Hardware threads detected: <strong>${hardwareThreads}</strong>,
-                    recommended import concurrency: <strong>${recommendedImportConcurrency}</strong>,
-                    refresh concurrency: <strong>${recommendedRefreshConcurrency}</strong>.
+                    ${t('oauth.codex.hardwareHint', {
+                        threads: hardwareThreads,
+                        importConcurrency: recommendedImportConcurrency,
+                        refreshConcurrency: recommendedRefreshConcurrency
+                    })}
                 </div>
                 <div style="display: flex; gap: 8px; margin-bottom: 16px;">
                     <button class="mode-btn active" data-mode="json" style="flex: 1; padding: 10px 16px; border: 2px solid #0ea5e9; border-radius: 8px; background: #ecfeff; color: #075985; font-weight: 600; cursor: pointer; transition: all 0.2s;">
-                        <i class="fas fa-code"></i> JSON Text
+                        <i class="fas fa-code"></i> ${t('oauth.codex.modeJson')}
                     </button>
                     <button class="mode-btn" data-mode="folder" style="flex: 1; padding: 10px 16px; border: 2px solid #d1d5db; border-radius: 8px; background: white; color: #6b7280; font-weight: 600; cursor: pointer; transition: all 0.2s;">
-                        <i class="fas fa-folder-open"></i> Folder Import
+                        <i class="fas fa-folder-open"></i> ${t('oauth.codex.modeFolder')}
                     </button>
                 </div>
 
                 <div id="codexJsonModeSection">
-                    <label for="batchCodexTokens" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">Paste JSON object/array</label>
-                    <textarea id="batchCodexTokens" rows="10" style="width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: monospace; font-size: 13px; resize: vertical;" placeholder='{"access_token":"...","refresh_token":"...","email":"..."}'></textarea>
+                    <label for="batchCodexTokens" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">${t('oauth.codex.tokensLabel')}</label>
+                    <textarea id="batchCodexTokens" rows="10" style="width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: monospace; font-size: 13px; resize: vertical;" placeholder='${t('oauth.codex.tokensPlaceholder')}'></textarea>
                 </div>
 
                 <div id="codexFolderModeSection" style="display: none;">
                     <div class="codex-folder-upload-area" style="border: 2px dashed #d1d5db; border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s;">
                         <input type="file" id="codexFolderInput" webkitdirectory directory multiple accept=".json,application/json" style="display: none;">
                         <i class="fas fa-folder-open" style="font-size: 36px; color: #9ca3af; margin-bottom: 8px;"></i>
-                        <p style="margin: 0; color: #6b7280;">Click or drag a folder with JSON files.</p>
+                        <p style="margin: 0; color: #6b7280;">${t('oauth.codex.folderHint')}</p>
                     </div>
                     <div id="codexFilesList" style="display: none; margin-top: 12px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <label style="font-weight: 600; color: #374151;">Selected Files</label>
+                            <label style="font-weight: 600; color: #374151;">${t('oauth.codex.selectedFiles')}</label>
                             <button id="codexClearFilesBtn" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 12px; padding: 4px 8px; border-radius: 4px;">
-                                <i class="fas fa-trash-alt"></i> Clear
+                                <i class="fas fa-trash-alt"></i> ${t('oauth.codex.clearFiles')}
                             </button>
                         </div>
                         <div id="codexFilesContainer" style="background: #f9fafb; border-radius: 8px; padding: 12px; max-height: 180px; overflow-y: auto;"></div>
@@ -751,34 +753,34 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
                     <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
                         <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151;">
                             <input id="codexSkipDuplicateCheck" type="checkbox" checked>
-                            Skip duplicate check (faster)
+                            ${t('oauth.codex.skipDuplicateCheck')}
                         </label>
                         <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151;">
                             <input id="codexRefreshAfterImport" type="checkbox" checked>
-                            Refresh token after import
+                            ${t('oauth.codex.refreshAfterImport')}
                         </label>
                         <label style="font-size: 13px; color: #374151;">
-                            Import concurrency
+                            ${t('oauth.codex.importConcurrency')}
                             <input id="codexImportConcurrency" type="number" min="1" max="256" value="${recommendedImportConcurrency}" style="margin-top: 4px; width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px;">
                         </label>
                         <label style="font-size: 13px; color: #374151;">
-                            Refresh concurrency
+                            ${t('oauth.codex.refreshConcurrency')}
                             <input id="codexRefreshConcurrency" type="number" min="1" max="64" value="${recommendedRefreshConcurrency}" style="margin-top: 4px; width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px;">
                         </label>
                     </div>
                 </div>
 
-                <div id="codexBatchStats" style="display: none; margin-top: 12px; padding: 12px; background: #f3f4f6; border-radius: 8px;">
+                <div id="codexBatchStats" style="display: none; margin-top: 12px; padding: 12px; background: #f3f4f6; border-radius: 8px; color: #1f2937;">
                     <div style="display: flex; justify-content: space-between;">
-                        <span>Total credential objects</span>
-                        <span id="codexTokenCountValue" style="font-weight: 600;">0</span>
+                        <span style="color: #1f2937;">${t('oauth.codex.tokenCount')}</span>
+                        <span id="codexTokenCountValue" style="font-weight: 600; color: #111827;">0</span>
                     </div>
                 </div>
 
                 <div id="codexBatchProgress" style="display: none; margin-top: 16px;">
                     <div style="display: flex; align-items: center; gap: 12px;">
                         <i class="fas fa-spinner fa-spin" style="color: #0284c7;"></i>
-                        <span id="codexProgressLabel">Importing...</span>
+                        <span id="codexProgressLabel">${t('oauth.codex.importing')}</span>
                     </div>
                     <div style="margin-top: 8px; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden;">
                         <div id="codexImportProgressBar" style="height: 100%; width: 0%; background: #0284c7; transition: width 0.25s;"></div>
@@ -790,7 +792,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
             <div class="modal-footer">
                 <button class="modal-cancel" data-i18n="modal.provider.cancel">${t('modal.provider.cancel')}</button>
                 <button class="btn btn-primary" id="codexBatchSubmit">
-                    <i class="fas fa-upload"></i> Start Import
+                    <i class="fas fa-upload"></i> ${t('oauth.codex.startImport')}
                 </button>
             </div>
         </div>
@@ -874,7 +876,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
         const parsed = JSON.parse(value);
         const objects = parsePayloadObjects(parsed);
         if (objects.length === 0) {
-            throw new Error('No valid JSON object found.');
+            throw new Error(t('oauth.codex.noValidObjects'));
         }
         return objects;
     };
@@ -886,7 +888,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
             selectedFiles = [];
             renderSelectedFiles();
             if (currentMode === 'folder') updateStats(0);
-            showToast(t('common.warning'), 'No JSON files found in selected folder.', 'warning');
+            showToast(t('common.warning'), t('oauth.codex.folderNoJson'), 'warning');
             return;
         }
 
@@ -903,7 +905,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
                     const data = JSON.parse(fileContent);
                     const objects = parsePayloadObjects(data);
                     if (objects.length === 0) {
-                        throw new Error('No valid JSON object found.');
+                        throw new Error(t('oauth.codex.noValidObjects'));
                     }
                     return {
                         success: true,
@@ -945,7 +947,11 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
         if (parseErrors.length > 0) {
             const first = parseErrors[0];
             const more = parseErrors.length > 1 ? ` (+${parseErrors.length - 1})` : '';
-            showToast(t('common.error'), `Failed to parse ${first.filename}: ${first.message}${more}`, 'error');
+            showToast(
+                t('common.error'),
+                t('oauth.codex.fileParseError', { filename: first.filename, message: first.message, extra: more }),
+                'error'
+            );
         }
     };
 
@@ -1048,7 +1054,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
         }
 
         if (tokens.length === 0) {
-            showToast(t('common.warning'), 'No credential objects to import.', 'warning');
+            showToast(t('common.warning'), t('oauth.codex.noCredentials'), 'warning');
             return;
         }
 
@@ -1066,13 +1072,13 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
 
         progressDiv.style.display = 'block';
         progressBar.style.width = '0%';
-        progressLabel.textContent = `Importing 0/${tokens.length}...`;
+        progressLabel.textContent = t('oauth.codex.importingProgress', { current: 0, total: tokens.length });
 
         resultDiv.style.cssText = 'display: block; margin-top: 16px; padding: 12px; border-radius: 8px; background: #f3f4f6; border: 1px solid #d1d5db;';
         resultDiv.innerHTML = `
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                 <i class="fas fa-spinner fa-spin" style="color: #0284c7;"></i>
-                <strong id="codexBatchProgressText">Importing 0/${tokens.length}...</strong>
+                <strong id="codexBatchProgressText">${t('oauth.codex.importingProgress', { current: 0, total: tokens.length })}</strong>
             </div>
             <div id="codexBatchResultsList" style="max-height: 220px; overflow-y: auto; font-size: 12px; margin-top: 8px;"></div>
         `;
@@ -1127,7 +1133,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
                             const total = data.total || tokens.length;
                             const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
                             progressBar.style.width = `${percentage}%`;
-                            const label = `Importing ${processed}/${total}...`;
+                            const label = t('oauth.codex.importingProgress', { current: processed, total });
                             progressText.textContent = label;
                             progressLabel.textContent = label;
 
@@ -1162,15 +1168,15 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
                             if (allSuccess) {
                                 resultClass = 'background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534;';
                                 icon = 'fa-check-circle';
-                                message = `Imported ${successCount} credentials successfully.`;
+                                message = t('oauth.codex.importSuccess', { count: successCount });
                             } else if (allFailed) {
                                 resultClass = 'background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;';
                                 icon = 'fa-times-circle';
-                                message = `All imports failed (${failedCount}).`;
+                                message = t('oauth.codex.importAllFailed', { count: failedCount });
                             } else {
                                 resultClass = 'background: #fffbeb; border: 1px solid #fde68a; color: #92400e;';
                                 icon = 'fa-exclamation-triangle';
-                                message = `Partial success: ${successCount} success, ${failedCount} failed.`;
+                                message = t('oauth.codex.importPartial', { success: successCount, failed: failedCount });
                             }
                             resultDiv.style.cssText = `display: block; margin-top: 16px; padding: 12px; border-radius: 8px; ${resultClass}`;
                             const header = resultDiv.querySelector('div:first-child');
@@ -1197,7 +1203,7 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
             resultDiv.innerHTML = `
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <i class="fas fa-times-circle"></i>
-                    <strong>Import failed: ${escapeHtml(error.message)}</strong>
+                    <strong>${t('oauth.codex.importFailed', { error: escapeHtml(error.message) })}</strong>
                 </div>
             `;
         } finally {
@@ -1213,11 +1219,11 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
                     btn.style.cursor = 'pointer';
                 });
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="fas fa-upload"></i> Start Import';
+                submitBtn.innerHTML = `<i class="fas fa-upload"></i> ${t('oauth.codex.startImport')}`;
             } else {
                 submitActsAsClose = true;
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="fas fa-check-circle"></i> Done';
+                submitBtn.innerHTML = `<i class="fas fa-check-circle"></i> ${t('oauth.codex.done')}`;
             }
         }
     });

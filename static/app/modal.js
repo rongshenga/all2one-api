@@ -7,9 +7,133 @@ import { t } from './i18n.js';
 // 分页配置
 const PROVIDERS_PER_PAGE = 5;
 let currentPage = 1;
+let allProviders = [];
 let currentProviders = [];
 let currentProviderType = '';
 let cachedModels = []; // 缓存模型列表
+let currentHealthFilter = 'all';
+
+/**
+ * 按健康状态筛选提供商
+ * @param {Array} providers - 提供商数组
+ * @param {string} healthFilter - 筛选类型 (all/healthy/unhealthy)
+ * @returns {Array} 筛选后的提供商数组
+ */
+function filterProvidersByHealth(providers, healthFilter = 'all') {
+    if (!Array.isArray(providers)) {
+        return [];
+    }
+
+    if (healthFilter === 'healthy') {
+        return providers.filter(provider => provider.isHealthy);
+    }
+
+    if (healthFilter === 'unhealthy') {
+        return providers.filter(provider => !provider.isHealthy);
+    }
+
+    return [...providers];
+}
+
+/**
+ * 更新筛选按钮激活状态
+ * @param {HTMLElement} modal - 模态框元素
+ */
+function updateProviderFilterButtonsState(modal) {
+    if (!modal) return;
+
+    const filterButtons = modal.querySelectorAll('.provider-filter-btn');
+    filterButtons.forEach(button => {
+        const buttonFilter = button.getAttribute('data-filter');
+        button.classList.toggle('active', buttonFilter === currentHealthFilter);
+    });
+}
+
+/**
+ * 渲染当前筛选结果对应的列表和分页
+ * @param {HTMLElement} modal - 模态框元素
+ * @param {Object} options - 渲染选项
+ * @param {boolean} options.scrollToTop - 是否滚动到顶部
+ */
+function renderProviderListWithPagination(modal, { scrollToTop = false } = {}) {
+    if (!modal) return;
+
+    const totalPages = Math.ceil(currentProviders.length / PROVIDERS_PER_PAGE);
+    if (totalPages === 0) {
+        currentPage = 1;
+    } else {
+        if (currentPage < 1) currentPage = 1;
+        if (currentPage > totalPages) currentPage = totalPages;
+    }
+
+    const providerList = modal.querySelector('.provider-list');
+    if (providerList) {
+        providerList.innerHTML = renderProviderListPaginated(currentProviders, currentPage);
+    }
+
+    const paginationContainers = modal.querySelectorAll('.pagination-container');
+    if (totalPages > 1) {
+        paginationContainers.forEach(container => {
+            const position = container.getAttribute('data-position');
+            container.outerHTML = renderPagination(currentPage, totalPages, currentProviders.length, position);
+        });
+
+        if (paginationContainers.length === 0) {
+            const providerListEl = modal.querySelector('.provider-list');
+            if (providerListEl) {
+                providerListEl.insertAdjacentHTML('beforebegin', renderPagination(currentPage, totalPages, currentProviders.length, 'top'));
+                providerListEl.insertAdjacentHTML('afterend', renderPagination(currentPage, totalPages, currentProviders.length, 'bottom'));
+            }
+        }
+    } else {
+        paginationContainers.forEach(container => container.remove());
+    }
+
+    if (scrollToTop) {
+        const modalBody = modal.querySelector('.provider-modal-body');
+        if (modalBody) {
+            modalBody.scrollTop = 0;
+        }
+    }
+
+    const startIndex = (currentPage - 1) * PROVIDERS_PER_PAGE;
+    const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, currentProviders.length);
+    const pageProviders = currentProviders.slice(startIndex, endIndex);
+
+    if (pageProviders.length === 0) {
+        return;
+    }
+
+    if (cachedModels.length > 0) {
+        pageProviders.forEach(provider => {
+            renderNotSupportedModelsSelector(provider.uuid, cachedModels, provider.notSupportedModels || []);
+        });
+    } else {
+        loadModelsForProviderType(currentProviderType, pageProviders);
+    }
+}
+
+/**
+ * 应用健康状态筛选并刷新列表
+ * @param {string} healthFilter - 筛选类型 (all/healthy/unhealthy)
+ * @param {boolean} resetPage - 是否重置到第一页
+ * @param {boolean} scrollToTop - 是否滚动到顶部
+ */
+function applyProviderHealthFilter(healthFilter = 'all', resetPage = true, scrollToTop = true) {
+    const validFilters = ['all', 'healthy', 'unhealthy'];
+    currentHealthFilter = validFilters.includes(healthFilter) ? healthFilter : 'all';
+    currentProviders = filterProvidersByHealth(allProviders, currentHealthFilter);
+
+    if (resetPage) {
+        currentPage = 1;
+    }
+
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+
+    updateProviderFilterButtonsState(modal);
+    renderProviderListWithPagination(modal, { scrollToTop });
+}
 
 /**
  * 显示提供商管理模态框
@@ -19,7 +143,9 @@ function showProviderManagerModal(data) {
     const { providerType, providers, totalCount, healthyCount } = data;
     
     // 保存当前数据用于分页
-    currentProviders = providers;
+    allProviders = Array.isArray(providers) ? providers : [];
+    currentHealthFilter = 'all';
+    currentProviders = filterProvidersByHealth(allProviders, currentHealthFilter);
     currentProviderType = providerType;
     currentPage = 1;
     cachedModels = [];
@@ -34,7 +160,7 @@ function showProviderManagerModal(data) {
         existingModal.remove();
     }
     
-    const totalPages = Math.ceil(providers.length / PROVIDERS_PER_PAGE);
+    const totalPages = Math.ceil(currentProviders.length / PROVIDERS_PER_PAGE);
     
     // 创建模态框
     const modal = document.createElement('div');
@@ -81,14 +207,29 @@ function showProviderManagerModal(data) {
                         </button>
                     </div>
                 </div>
-                
-                ${totalPages > 1 ? renderPagination(1, totalPages, providers.length) : ''}
-                
-                <div class="provider-list" id="providerList">
-                    ${renderProviderListPaginated(providers, 1)}
+
+                <div class="provider-filter-bar">
+                    <span class="provider-filter-label" data-i18n="modal.provider.filter.label">${t('modal.provider.filter.label')}</span>
+                    <div class="provider-filter-actions">
+                        <button class="provider-filter-btn active" data-filter="all" data-i18n="modal.provider.filter.all" onclick="window.applyProviderHealthFilter('all')">
+                            ${t('modal.provider.filter.all')}
+                        </button>
+                        <button class="provider-filter-btn" data-filter="healthy" data-i18n="modal.provider.filter.healthy" onclick="window.applyProviderHealthFilter('healthy')">
+                            ${t('modal.provider.filter.healthy')}
+                        </button>
+                        <button class="provider-filter-btn" data-filter="unhealthy" data-i18n="modal.provider.filter.unhealthy" onclick="window.applyProviderHealthFilter('unhealthy')">
+                            ${t('modal.provider.filter.unhealthy')}
+                        </button>
+                    </div>
                 </div>
                 
-                ${totalPages > 1 ? renderPagination(1, totalPages, providers.length, 'bottom') : ''}
+                ${totalPages > 1 ? renderPagination(1, totalPages, currentProviders.length) : ''}
+                
+                <div class="provider-list" id="providerList">
+                    ${renderProviderListPaginated(currentProviders, 1)}
+                </div>
+                
+                ${totalPages > 1 ? renderPagination(1, totalPages, currentProviders.length, 'bottom') : ''}
             </div>
         </div>
     `;
@@ -98,10 +239,13 @@ function showProviderManagerModal(data) {
     
     // 添加模态框事件监听
     addModalEventListeners(modal);
+    updateProviderFilterButtonsState(modal);
     
     // 先获取该提供商类型的模型列表（只调用一次API）
-    const pageProviders = providers.slice(0, PROVIDERS_PER_PAGE);
-    loadModelsForProviderType(providerType, pageProviders);
+    const pageProviders = currentProviders.slice(0, PROVIDERS_PER_PAGE);
+    if (pageProviders.length > 0) {
+        loadModelsForProviderType(providerType, pageProviders);
+    }
 }
 
 /**
@@ -175,45 +319,17 @@ function renderPagination(page, totalPages, totalItems, position = 'top') {
  */
 function goToProviderPage(page) {
     const totalPages = Math.ceil(currentProviders.length / PROVIDERS_PER_PAGE);
-    
-    // 验证页码范围
-    if (page < 1) page = 1;
-    if (page > totalPages) page = totalPages;
-    
-    currentPage = page;
-    
-    // 更新提供商列表
-    const providerList = document.getElementById('providerList');
-    if (providerList) {
-        providerList.innerHTML = renderProviderListPaginated(currentProviders, page);
-    }
-    
-    // 更新分页控件
-    const paginationContainers = document.querySelectorAll('.pagination-container');
-    paginationContainers.forEach(container => {
-        const position = container.getAttribute('data-position');
-        container.outerHTML = renderPagination(page, totalPages, currentProviders.length, position);
-    });
-    
-    // 滚动到顶部
-    const modalBody = document.querySelector('.provider-modal-body');
-    if (modalBody) {
-        modalBody.scrollTop = 0;
-    }
-    
-    // 为当前页的提供商加载模型列表
-    const startIndex = (page - 1) * PROVIDERS_PER_PAGE;
-    const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, currentProviders.length);
-    const pageProviders = currentProviders.slice(startIndex, endIndex);
-    
-    // 如果已缓存模型列表，直接使用
-    if (cachedModels.length > 0) {
-        pageProviders.forEach(provider => {
-            renderNotSupportedModelsSelector(provider.uuid, cachedModels, provider.notSupportedModels || []);
-        });
+    if (totalPages <= 0) {
+        currentPage = 1;
     } else {
-        loadModelsForProviderType(currentProviderType, pageProviders);
+        if (page < 1) page = 1;
+        if (page > totalPages) page = totalPages;
+        currentPage = page;
     }
+
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+    renderProviderListWithPagination(modal, { scrollToTop: true });
 }
 
 /**
@@ -223,6 +339,15 @@ function goToProviderPage(page) {
  * @returns {string} HTML字符串
  */
 function renderProviderListPaginated(providers, page) {
+    if (!Array.isArray(providers) || providers.length === 0) {
+        return `
+            <div class="provider-empty-state">
+                <i class="fas fa-filter"></i>
+                <span data-i18n="modal.provider.filter.empty">${t('modal.provider.filter.empty')}</span>
+            </div>
+        `;
+    }
+
     const startIndex = (page - 1) * PROVIDERS_PER_PAGE;
     const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, providers.length);
     const pageProviders = providers.slice(startIndex, endIndex);
@@ -979,7 +1104,7 @@ async function refreshProviderConfig(providerType) {
         const modal = document.querySelector('.provider-modal');
         if (modal && modal.getAttribute('data-provider-type') === providerType) {
             // 更新缓存的提供商数据
-            currentProviders = data.providers;
+            allProviders = Array.isArray(data.providers) ? data.providers : [];
             currentProviderType = providerType;
             
             // 更新统计信息
@@ -992,47 +1117,9 @@ async function refreshProviderConfig(providerType) {
             if (healthyCountElement) {
                 healthyCountElement.textContent = data.healthyCount;
             }
-            
-            const totalPages = Math.ceil(data.providers.length / PROVIDERS_PER_PAGE);
-            
-            // 确保当前页不超过总页数
-            if (currentPage > totalPages) {
-                currentPage = Math.max(1, totalPages);
-            }
-            
-            // 重新渲染提供商列表（分页）
-            const providerList = modal.querySelector('.provider-list');
-            if (providerList) {
-                providerList.innerHTML = renderProviderListPaginated(data.providers, currentPage);
-            }
-            
-            // 更新分页控件
-            const paginationContainers = modal.querySelectorAll('.pagination-container');
-            if (totalPages > 1) {
-                paginationContainers.forEach(container => {
-                    const position = container.getAttribute('data-position');
-                    container.outerHTML = renderPagination(currentPage, totalPages, data.providers.length, position);
-                });
-                
-                // 如果之前没有分页控件，需要添加
-                if (paginationContainers.length === 0) {
-                    const modalBody = modal.querySelector('.provider-modal-body');
-                    const providerListEl = modal.querySelector('.provider-list');
-                    if (modalBody && providerListEl) {
-                        providerListEl.insertAdjacentHTML('beforebegin', renderPagination(currentPage, totalPages, data.providers.length, 'top'));
-                        providerListEl.insertAdjacentHTML('afterend', renderPagination(currentPage, totalPages, data.providers.length, 'bottom'));
-                    }
-                }
-            } else {
-                // 如果只有一页，移除分页控件
-                paginationContainers.forEach(container => container.remove());
-            }
-            
-            // 重新加载当前页的模型列表
-            const startIndex = (currentPage - 1) * PROVIDERS_PER_PAGE;
-            const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, data.providers.length);
-            const pageProviders = data.providers.slice(startIndex, endIndex);
-            loadModelsForProviderType(providerType, pageProviders);
+
+            // 保留当前筛选条件，刷新筛选结果和分页
+            applyProviderHealthFilter(currentHealthFilter, false, false);
         }
         
         // 同时更新主界面的提供商统计数据
@@ -1687,7 +1774,7 @@ async function refreshProviderUuid(uuid, event) {
  */
 async function deleteUnhealthyProviders(providerType) {
     // 先获取不健康节点数量
-    const unhealthyCount = currentProviders.filter(p => !p.isHealthy).length;
+    const unhealthyCount = allProviders.filter(p => !p.isHealthy).length;
     
     if (unhealthyCount === 0) {
         showToast(t('common.info'), t('modal.provider.deleteUnhealthy.noUnhealthy'), 'info');
@@ -1732,7 +1819,7 @@ async function deleteUnhealthyProviders(providerType) {
  */
 async function refreshUnhealthyUuids(providerType) {
     // 先获取不健康节点数量
-    const unhealthyCount = currentProviders.filter(p => !p.isHealthy).length;
+    const unhealthyCount = allProviders.filter(p => !p.isHealthy).length;
     
     if (unhealthyCount === 0) {
         showToast(t('common.info'), t('modal.provider.refreshUnhealthyUuids.noUnhealthy'), 'info');
@@ -1828,6 +1915,7 @@ export {
     loadModelsForProviderType,
     renderNotSupportedModelsSelector,
     goToProviderPage,
+    applyProviderHealthFilter,
     refreshProviderUuid
 };
 
@@ -1847,4 +1935,5 @@ window.deleteUnhealthyProviders = deleteUnhealthyProviders;
 window.refreshUnhealthyUuids = refreshUnhealthyUuids;
 window.showGrokBatchImportModal = showGrokBatchImportModal;
 window.goToProviderPage = goToProviderPage;
+window.applyProviderHealthFilter = applyProviderHealthFilter;
 window.refreshProviderUuid = refreshProviderUuid;
