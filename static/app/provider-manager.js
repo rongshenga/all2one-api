@@ -493,6 +493,12 @@ async function handleGenerateAuthUrl(providerType) {
         return;
     }
 
+    // Codex 支持 OAuth + Batch Import 两种方式
+    if (providerType === 'openai-codex-oauth') {
+        showCodexAuthMethodSelector(providerType);
+        return;
+    }
+
     // 如果是 Gemini OAuth 或 Antigravity，显示认证方式选择对话框
     if (providerType === 'gemini-cli-oauth' || providerType === 'gemini-antigravity') {
         showGeminiAuthMethodSelector(providerType);
@@ -597,6 +603,626 @@ function showKiroAuthMethodSelector(providerType) {
             }
         });
     });
+}
+
+/**
+ * 显示 Codex OAuth 认证方式选择对话框
+ * @param {string} providerType - 提供商类型
+ */
+function showCodexAuthMethodSelector(providerType) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-key"></i> Codex Authentication Method</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="auth-method-options" style="display: flex; flex-direction: column; gap: 12px;">
+                    <button class="auth-method-btn" data-method="oauth" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-link" style="font-size: 24px; color: #d97706;"></i>
+                        <div style="text-align: left;">
+                            <div style="font-weight: 600; color: #333;">OAuth Login</div>
+                            <div style="font-size: 12px; color: #666;">Open browser and authorize a single account.</div>
+                        </div>
+                    </button>
+                    <button class="auth-method-btn" data-method="batch-import" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-file-import" style="font-size: 24px; color: #0ea5e9;"></i>
+                        <div style="text-align: left;">
+                            <div style="font-weight: 600; color: #333;">Batch Import JSON</div>
+                            <div style="font-size: 12px; color: #666;">Import thousands of accounts from JSON payloads/files.</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel" data-i18n="modal.provider.cancel">${t('modal.provider.cancel')}</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = modal.querySelector('.modal-cancel');
+    [closeBtn, cancelBtn].forEach(btn => {
+        btn.addEventListener('click', () => {
+            modal.remove();
+        });
+    });
+
+    const methodBtns = modal.querySelectorAll('.auth-method-btn');
+    methodBtns.forEach(btn => {
+        btn.addEventListener('mouseenter', () => {
+            btn.style.borderColor = '#d97706';
+            btn.style.background = '#fff7ed';
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.borderColor = '#e0e0e0';
+            btn.style.background = 'white';
+        });
+        btn.addEventListener('click', async () => {
+            const method = btn.dataset.method;
+            modal.remove();
+
+            if (method === 'batch-import') {
+                showCodexBatchImportModal(providerType);
+            } else {
+                await executeGenerateAuthUrl(providerType, {});
+            }
+        });
+    });
+}
+
+/**
+ * 显示 Codex 批量导入模态框
+ * @param {string} providerType - 提供商类型
+ */
+function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
+    const hardwareThreads = Math.max(1, Number(navigator.hardwareConcurrency) || 8);
+    const browserMemGB = Number(navigator.deviceMemory);
+    const memoryHint = Number.isFinite(browserMemGB) && browserMemGB > 0 ? browserMemGB : null;
+    const importByCpu = hardwareThreads * 10;
+    const importByMem = memoryHint ? memoryHint * 6 : Number.POSITIVE_INFINITY;
+    const baseImportConcurrency = Math.min(256, Math.max(24, Math.min(importByCpu, importByMem)));
+    const maxImportConcurrency = Math.min(256, Math.max(baseImportConcurrency, hardwareThreads * 24, 128));
+    const baseRefreshConcurrency = Math.min(
+        64,
+        Math.max(8, Math.floor(baseImportConcurrency * 0.25), hardwareThreads * 2)
+    );
+    const maxRefreshConcurrency = Math.min(64, Math.max(baseRefreshConcurrency, hardwareThreads * 6, 32));
+    const recommendedImportConcurrency = maxImportConcurrency;
+    const recommendedRefreshConcurrency = maxRefreshConcurrency;
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 680px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-import"></i> Codex Batch Import</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 16px; padding: 12px; background: #ecfeff; border: 1px solid #bae6fd; border-radius: 8px; color: #0c4a6e; font-size: 13px;">
+                    Supports automatic field recognition for Codex credentials. Required minimal field: <code>access_token</code>.
+                </div>
+                <div style="margin-bottom: 12px; padding: 10px 12px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; color: #334155; font-size: 12px;">
+                    Hardware threads detected: <strong>${hardwareThreads}</strong>,
+                    recommended import concurrency: <strong>${recommendedImportConcurrency}</strong>,
+                    refresh concurrency: <strong>${recommendedRefreshConcurrency}</strong>.
+                </div>
+                <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                    <button class="mode-btn active" data-mode="json" style="flex: 1; padding: 10px 16px; border: 2px solid #0ea5e9; border-radius: 8px; background: #ecfeff; color: #075985; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-code"></i> JSON Text
+                    </button>
+                    <button class="mode-btn" data-mode="folder" style="flex: 1; padding: 10px 16px; border: 2px solid #d1d5db; border-radius: 8px; background: white; color: #6b7280; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-folder-open"></i> Folder Import
+                    </button>
+                </div>
+
+                <div id="codexJsonModeSection">
+                    <label for="batchCodexTokens" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">Paste JSON object/array</label>
+                    <textarea id="batchCodexTokens" rows="10" style="width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: monospace; font-size: 13px; resize: vertical;" placeholder='{"access_token":"...","refresh_token":"...","email":"..."}'></textarea>
+                </div>
+
+                <div id="codexFolderModeSection" style="display: none;">
+                    <div class="codex-folder-upload-area" style="border: 2px dashed #d1d5db; border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s;">
+                        <input type="file" id="codexFolderInput" webkitdirectory directory multiple accept=".json,application/json" style="display: none;">
+                        <i class="fas fa-folder-open" style="font-size: 36px; color: #9ca3af; margin-bottom: 8px;"></i>
+                        <p style="margin: 0; color: #6b7280;">Click or drag a folder with JSON files.</p>
+                    </div>
+                    <div id="codexFilesList" style="display: none; margin-top: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <label style="font-weight: 600; color: #374151;">Selected Files</label>
+                            <button id="codexClearFilesBtn" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 12px; padding: 4px 8px; border-radius: 4px;">
+                                <i class="fas fa-trash-alt"></i> Clear
+                            </button>
+                        </div>
+                        <div id="codexFilesContainer" style="background: #f9fafb; border-radius: 8px; padding: 12px; max-height: 180px; overflow-y: auto;"></div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 16px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb;">
+                    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151;">
+                            <input id="codexSkipDuplicateCheck" type="checkbox" checked>
+                            Skip duplicate check (faster)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151;">
+                            <input id="codexRefreshAfterImport" type="checkbox" checked>
+                            Refresh token after import
+                        </label>
+                        <label style="font-size: 13px; color: #374151;">
+                            Import concurrency
+                            <input id="codexImportConcurrency" type="number" min="1" max="256" value="${recommendedImportConcurrency}" style="margin-top: 4px; width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+                        </label>
+                        <label style="font-size: 13px; color: #374151;">
+                            Refresh concurrency
+                            <input id="codexRefreshConcurrency" type="number" min="1" max="64" value="${recommendedRefreshConcurrency}" style="margin-top: 4px; width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px;">
+                        </label>
+                    </div>
+                </div>
+
+                <div id="codexBatchStats" style="display: none; margin-top: 12px; padding: 12px; background: #f3f4f6; border-radius: 8px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>Total credential objects</span>
+                        <span id="codexTokenCountValue" style="font-weight: 600;">0</span>
+                    </div>
+                </div>
+
+                <div id="codexBatchProgress" style="display: none; margin-top: 16px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <i class="fas fa-spinner fa-spin" style="color: #0284c7;"></i>
+                        <span id="codexProgressLabel">Importing...</span>
+                    </div>
+                    <div style="margin-top: 8px; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden;">
+                        <div id="codexImportProgressBar" style="height: 100%; width: 0%; background: #0284c7; transition: width 0.25s;"></div>
+                    </div>
+                </div>
+
+                <div id="codexBatchResult" style="display: none; margin-top: 16px; padding: 12px; border-radius: 8px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel" data-i18n="modal.provider.cancel">${t('modal.provider.cancel')}</button>
+                <button class="btn btn-primary" id="codexBatchSubmit">
+                    <i class="fas fa-upload"></i> Start Import
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = modal.querySelector('.modal-cancel');
+    const submitBtn = modal.querySelector('#codexBatchSubmit');
+    const modeBtns = Array.from(modal.querySelectorAll('.mode-btn'));
+    const jsonModeSection = modal.querySelector('#codexJsonModeSection');
+    const folderModeSection = modal.querySelector('#codexFolderModeSection');
+    const textarea = modal.querySelector('#batchCodexTokens');
+    const folderUploadArea = modal.querySelector('.codex-folder-upload-area');
+    const folderInput = modal.querySelector('#codexFolderInput');
+    const filesListDiv = modal.querySelector('#codexFilesList');
+    const filesContainer = modal.querySelector('#codexFilesContainer');
+    const clearFilesBtn = modal.querySelector('#codexClearFilesBtn');
+    const statsDiv = modal.querySelector('#codexBatchStats');
+    const tokenCountValue = modal.querySelector('#codexTokenCountValue');
+    const progressDiv = modal.querySelector('#codexBatchProgress');
+    const progressBar = modal.querySelector('#codexImportProgressBar');
+    const progressLabel = modal.querySelector('#codexProgressLabel');
+    const resultDiv = modal.querySelector('#codexBatchResult');
+    const skipDuplicateCheckInput = modal.querySelector('#codexSkipDuplicateCheck');
+    const refreshAfterImportInput = modal.querySelector('#codexRefreshAfterImport');
+    const importConcurrencyInput = modal.querySelector('#codexImportConcurrency');
+    const refreshConcurrencyInput = modal.querySelector('#codexRefreshConcurrency');
+
+    let currentMode = 'json';
+    let folderTokens = [];
+    let selectedFiles = [];
+    let submitActsAsClose = false;
+
+    const escapeHtml = (value) => String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const parsePayloadObjects = (data) => {
+        if (Array.isArray(data)) {
+            return data.filter(item => item && typeof item === 'object' && !Array.isArray(item));
+        }
+        if (data && typeof data === 'object') {
+            return [data];
+        }
+        return [];
+    };
+
+    const updateStats = (count) => {
+        if (count > 0) {
+            statsDiv.style.display = 'block';
+            tokenCountValue.textContent = String(count);
+        } else {
+            statsDiv.style.display = 'none';
+            tokenCountValue.textContent = '0';
+        }
+    };
+
+    const renderSelectedFiles = () => {
+        if (selectedFiles.length === 0) {
+            filesListDiv.style.display = 'none';
+            filesContainer.innerHTML = '';
+            return;
+        }
+        filesListDiv.style.display = 'block';
+        filesContainer.innerHTML = selectedFiles.map(file => `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-radius: 6px; background: white; margin-bottom: 6px;">
+                <span style="font-size: 12px; color: #374151; word-break: break-all;">${escapeHtml(file.path)}</span>
+                <span style="font-size: 12px; color: #6b7280; white-space: nowrap; margin-left: 12px;">${file.tokenCount}</span>
+            </div>
+        `).join('');
+    };
+
+    const parseTokensFromTextarea = () => {
+        const value = textarea.value.trim();
+        if (!value) return [];
+        const parsed = JSON.parse(value);
+        const objects = parsePayloadObjects(parsed);
+        if (objects.length === 0) {
+            throw new Error('No valid JSON object found.');
+        }
+        return objects;
+    };
+
+    const parseFolderFiles = async (fileList) => {
+        const files = Array.from(fileList || []).filter(file => file.name.toLowerCase().endsWith('.json'));
+        if (files.length === 0) {
+            folderTokens = [];
+            selectedFiles = [];
+            renderSelectedFiles();
+            if (currentMode === 'folder') updateStats(0);
+            showToast(t('common.warning'), 'No JSON files found in selected folder.', 'warning');
+            return;
+        }
+
+        const parsedTokens = [];
+        const parsedFiles = [];
+        const parseErrors = [];
+        const parseConcurrency = 20;
+
+        for (let start = 0; start < files.length; start += parseConcurrency) {
+            const batch = files.slice(start, start + parseConcurrency);
+            const batchResults = await Promise.all(batch.map(async (file) => {
+                try {
+                    const fileContent = await file.text();
+                    const data = JSON.parse(fileContent);
+                    const objects = parsePayloadObjects(data);
+                    if (objects.length === 0) {
+                        throw new Error('No valid JSON object found.');
+                    }
+                    return {
+                        success: true,
+                        tokens: objects,
+                        path: file.webkitRelativePath || file.name
+                    };
+                } catch (error) {
+                    return {
+                        success: false,
+                        filename: file.name,
+                        message: error.message
+                    };
+                }
+            }));
+
+            for (const item of batchResults) {
+                if (item.success) {
+                    parsedTokens.push(...item.tokens);
+                    parsedFiles.push({
+                        path: item.path,
+                        tokenCount: item.tokens.length
+                    });
+                } else {
+                    parseErrors.push({
+                        filename: item.filename,
+                        message: item.message
+                    });
+                }
+            }
+        }
+
+        folderTokens = parsedTokens;
+        selectedFiles = parsedFiles;
+        renderSelectedFiles();
+        if (currentMode === 'folder') {
+            updateStats(folderTokens.length);
+        }
+
+        if (parseErrors.length > 0) {
+            const first = parseErrors[0];
+            const more = parseErrors.length > 1 ? ` (+${parseErrors.length - 1})` : '';
+            showToast(t('common.error'), `Failed to parse ${first.filename}: ${first.message}${more}`, 'error');
+        }
+    };
+
+    const setMode = (mode) => {
+        currentMode = mode;
+        modeBtns.forEach(btn => {
+            const isActive = btn.dataset.mode === mode;
+            btn.classList.toggle('active', isActive);
+            if (isActive) {
+                btn.style.borderColor = '#0ea5e9';
+                btn.style.background = '#ecfeff';
+                btn.style.color = '#075985';
+            } else {
+                btn.style.borderColor = '#d1d5db';
+                btn.style.background = 'white';
+                btn.style.color = '#6b7280';
+            }
+        });
+
+        const isJson = mode === 'json';
+        jsonModeSection.style.display = isJson ? 'block' : 'none';
+        folderModeSection.style.display = isJson ? 'none' : 'block';
+
+        if (isJson) {
+            try {
+                updateStats(parseTokensFromTextarea().length);
+            } catch {
+                updateStats(0);
+            }
+        } else {
+            updateStats(folderTokens.length);
+        }
+    };
+
+    textarea.addEventListener('input', () => {
+        if (currentMode !== 'json') return;
+        try {
+            updateStats(parseTokensFromTextarea().length);
+        } catch {
+            updateStats(0);
+        }
+    });
+
+    modeBtns.forEach(btn => {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+    });
+
+    folderUploadArea.addEventListener('click', () => folderInput.click());
+    folderInput.addEventListener('change', async () => {
+        await parseFolderFiles(folderInput.files);
+    });
+
+    folderUploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        folderUploadArea.style.borderColor = '#0ea5e9';
+        folderUploadArea.style.background = '#ecfeff';
+    });
+    folderUploadArea.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        folderUploadArea.style.borderColor = '#d1d5db';
+        folderUploadArea.style.background = 'transparent';
+    });
+    folderUploadArea.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        folderUploadArea.style.borderColor = '#d1d5db';
+        folderUploadArea.style.background = 'transparent';
+        await parseFolderFiles(e.dataTransfer.files);
+    });
+
+    clearFilesBtn.addEventListener('click', () => {
+        folderTokens = [];
+        selectedFiles = [];
+        folderInput.value = '';
+        renderSelectedFiles();
+        if (currentMode === 'folder') {
+            updateStats(0);
+        }
+    });
+
+    [closeBtn, cancelBtn].forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!cancelBtn.disabled) {
+                modal.remove();
+            }
+        });
+    });
+
+    submitBtn.addEventListener('click', async () => {
+        if (submitActsAsClose) {
+            modal.remove();
+            return;
+        }
+
+        let tokens = [];
+        try {
+            tokens = currentMode === 'folder' ? [...folderTokens] : parseTokensFromTextarea();
+        } catch (error) {
+            showToast(t('common.error'), error.message, 'error');
+            return;
+        }
+
+        if (tokens.length === 0) {
+            showToast(t('common.warning'), 'No credential objects to import.', 'warning');
+            return;
+        }
+
+        textarea.disabled = true;
+        folderInput.disabled = true;
+        clearFilesBtn.disabled = true;
+        submitActsAsClose = false;
+        modeBtns.forEach(btn => {
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+            btn.style.cursor = 'not-allowed';
+        });
+        submitBtn.disabled = true;
+        cancelBtn.disabled = true;
+
+        progressDiv.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressLabel.textContent = `Importing 0/${tokens.length}...`;
+
+        resultDiv.style.cssText = 'display: block; margin-top: 16px; padding: 12px; border-radius: 8px; background: #f3f4f6; border: 1px solid #d1d5db;';
+        resultDiv.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <i class="fas fa-spinner fa-spin" style="color: #0284c7;"></i>
+                <strong id="codexBatchProgressText">Importing 0/${tokens.length}...</strong>
+            </div>
+            <div id="codexBatchResultsList" style="max-height: 220px; overflow-y: auto; font-size: 12px; margin-top: 8px;"></div>
+        `;
+
+        const progressText = resultDiv.querySelector('#codexBatchProgressText');
+        const resultsList = resultDiv.querySelector('#codexBatchResultsList');
+        let importSuccess = false;
+
+        try {
+            const response = await fetch('/api/codex/batch-import-tokens', {
+                method: 'POST',
+                headers: window.apiClient ? window.apiClient.getAuthHeaders() : { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    providerType,
+                    tokens,
+                    skipDuplicateCheck: skipDuplicateCheckInput.checked,
+                    refreshAfterImport: refreshAfterImportInput.checked,
+                    concurrency: Number.parseInt(importConcurrencyInput.value, 10) || recommendedImportConcurrency,
+                    refreshConcurrency: Number.parseInt(refreshConcurrencyInput.value, 10) || recommendedRefreshConcurrency
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let finished = false;
+
+            while (!finished) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                let eventType = '';
+                let eventData = '';
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.substring(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        eventData = line.substring(6).trim();
+                        if (!eventType || !eventData) continue;
+
+                        const data = JSON.parse(eventData);
+                        if (eventType === 'progress') {
+                            const processed = data.processedCount || data.index || 0;
+                            const total = data.total || tokens.length;
+                            const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+                            progressBar.style.width = `${percentage}%`;
+                            const label = `Importing ${processed}/${total}...`;
+                            progressText.textContent = label;
+                            progressLabel.textContent = label;
+
+                            const current = data.current || {};
+                            const item = document.createElement('div');
+                            item.style.cssText = 'padding: 4px 0; border-bottom: 1px solid rgba(0,0,0,0.08);';
+                            if (current.success) {
+                                const refreshInfo = current.refresh?.attempted
+                                    ? (current.refresh.success ? ' (refresh ok)' : ` (refresh failed: ${current.refresh.message || 'unknown'})`)
+                                    : (current.refresh?.skipped ? ' (refresh skipped)' : '');
+                                item.innerHTML = `#${current.index}: <span style="color:#166534;">✓ ${escapeHtml(current.path || '')}</span>${refreshInfo}`;
+                            } else if (current.error === 'duplicate') {
+                                item.innerHTML = `#${current.index}: <span style="color:#b45309;">⚠ duplicate (${escapeHtml(current.reason || 'matched')})</span>
+                                    ${current.existingPath ? `<span style="color:#6b7280;">(${escapeHtml(current.existingPath)})</span>` : ''}`;
+                            } else {
+                                item.innerHTML = `#${current.index}: <span style="color:#991b1b;">✗ ${escapeHtml(current.error || 'unknown error')}</span>`;
+                            }
+                            resultsList.appendChild(item);
+                            resultsList.scrollTop = resultsList.scrollHeight;
+                        } else if (eventType === 'complete') {
+                            finished = true;
+                            progressBar.style.width = '100%';
+                            progressDiv.style.display = 'none';
+
+                            const successCount = data.successCount || 0;
+                            const failedCount = data.failedCount || 0;
+                            const allSuccess = failedCount === 0;
+                            const allFailed = successCount === 0;
+                            let resultClass = '';
+                            let icon = '';
+                            let message = '';
+                            if (allSuccess) {
+                                resultClass = 'background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534;';
+                                icon = 'fa-check-circle';
+                                message = `Imported ${successCount} credentials successfully.`;
+                            } else if (allFailed) {
+                                resultClass = 'background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;';
+                                icon = 'fa-times-circle';
+                                message = `All imports failed (${failedCount}).`;
+                            } else {
+                                resultClass = 'background: #fffbeb; border: 1px solid #fde68a; color: #92400e;';
+                                icon = 'fa-exclamation-triangle';
+                                message = `Partial success: ${successCount} success, ${failedCount} failed.`;
+                            }
+                            resultDiv.style.cssText = `display: block; margin-top: 16px; padding: 12px; border-radius: 8px; ${resultClass}`;
+                            const header = resultDiv.querySelector('div:first-child');
+                            header.innerHTML = `<i class="fas ${icon}"></i> <strong>${message}</strong>`;
+
+                            if (successCount > 0) {
+                                importSuccess = true;
+                                await loadProviders();
+                                await loadConfigList();
+                            }
+                        } else if (eventType === 'error') {
+                            throw new Error(data.error || 'batch import failed');
+                        }
+
+                        eventType = '';
+                        eventData = '';
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[Codex Batch Import] Failed:', error);
+            progressDiv.style.display = 'none';
+            resultDiv.style.cssText = 'display: block; margin-top: 16px; padding: 12px; border-radius: 8px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;';
+            resultDiv.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-times-circle"></i>
+                    <strong>Import failed: ${escapeHtml(error.message)}</strong>
+                </div>
+            `;
+        } finally {
+            cancelBtn.disabled = false;
+            if (!importSuccess) {
+                textarea.disabled = false;
+                folderInput.disabled = false;
+                clearFilesBtn.disabled = false;
+                submitActsAsClose = false;
+                modeBtns.forEach(btn => {
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    btn.style.cursor = 'pointer';
+                });
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-upload"></i> Start Import';
+            } else {
+                submitActsAsClose = true;
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-check-circle"></i> Done';
+            }
+        }
+    });
+
+    setMode('json');
 }
 
 /**
@@ -842,6 +1468,7 @@ function showGeminiBatchImportModal(providerType) {
     let currentMode = 'json';
     let folderTokens = [];
     let selectedFiles = [];
+    let submitActsAsClose = false;
     
     const escapeHtml = (value) => String(value || '')
         .replace(/&/g, '&amp;')
@@ -1060,6 +1687,11 @@ function showGeminiBatchImportModal(providerType) {
     
     // 提交按钮事件
     submitBtn.addEventListener('click', async () => {
+        if (submitActsAsClose) {
+            modal.remove();
+            return;
+        }
+
         let tokens = [];
         try {
             if (currentMode === 'folder') {
@@ -1081,6 +1713,7 @@ function showGeminiBatchImportModal(providerType) {
         textarea.disabled = true;
         folderInput.disabled = true;
         clearFilesBtn.disabled = true;
+        submitActsAsClose = false;
         modeBtns.forEach(btn => {
             btn.disabled = true;
             btn.style.opacity = '0.6';
@@ -1223,6 +1856,7 @@ function showGeminiBatchImportModal(providerType) {
                 textarea.disabled = false;
                 folderInput.disabled = false;
                 clearFilesBtn.disabled = false;
+                submitActsAsClose = false;
                 modeBtns.forEach(btn => {
                     btn.disabled = false;
                     btn.style.opacity = '1';
@@ -1231,6 +1865,8 @@ function showGeminiBatchImportModal(providerType) {
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="fas fa-upload"></i> <span data-i18n="oauth.gemini.startImport">${t('oauth.gemini.startImport')}</span>`;
             } else {
+                submitActsAsClose = true;
+                submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="fas fa-check-circle"></i> <span>${t('common.success')}</span>`;
             }
         }
@@ -1310,6 +1946,7 @@ function showKiroBatchImportModal() {
     const submitBtn = modal.querySelector('#batchImportSubmit');
     const closeBtn = modal.querySelector('.modal-close');
     const cancelBtn = modal.querySelector('.modal-cancel');
+    let submitActsAsClose = false;
     
     // 实时统计 token 数量
     textarea.addEventListener('input', () => {
@@ -1331,6 +1968,11 @@ function showKiroBatchImportModal() {
     
     // 提交按钮事件 - 使用 SSE 流式响应实时显示进度
     submitBtn.addEventListener('click', async () => {
+        if (submitActsAsClose) {
+            modal.remove();
+            return;
+        }
+
         const tokens = textarea.value.split('\n').filter(line => line.trim());
         
         if (tokens.length === 0) {
@@ -1342,6 +1984,7 @@ function showKiroBatchImportModal() {
         textarea.disabled = true;
         submitBtn.disabled = true;
         cancelBtn.disabled = true;
+        submitActsAsClose = false;
         progressDiv.style.display = 'block';
         resultDiv.style.display = 'none';
         progressBar.style.width = '0%';
@@ -1505,9 +2148,12 @@ function showKiroBatchImportModal() {
             cancelBtn.disabled = false;
             if (!importSuccess) {
                 textarea.disabled = false;
+                submitActsAsClose = false;
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="fas fa-upload"></i> <span data-i18n="oauth.kiro.startImport">${t('oauth.kiro.startImport')}</span>`;
             } else {
+                submitActsAsClose = true;
+                submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="fas fa-check-circle"></i> <span>${t('common.success')}</span>`;
             }
         }
@@ -1689,6 +2335,7 @@ function showKiroAwsImportModal() {
     let uploadedFiles = [];
     let mergedCredentials = null;
     let currentMode = 'file';
+    let submitActsAsClose = false;
     
     // 清空文件按钮事件
     clearFilesBtn.addEventListener('click', () => {
@@ -2132,6 +2779,11 @@ function showKiroAwsImportModal() {
     
     // 提交按钮事件
     submitBtn.addEventListener('click', async () => {
+        if (submitActsAsClose) {
+            modal.remove();
+            return;
+        }
+
         if (!mergedCredentials) {
             showToast(t('common.warning'), t('oauth.kiro.awsNoCredentials'), 'warning');
             return;
@@ -2144,6 +2796,7 @@ function showKiroAwsImportModal() {
         submitBtn.disabled = true;
         cancelBtn.disabled = true;
         submitBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span>${t('oauth.kiro.awsImporting')}</span>`;
+        submitActsAsClose = false;
         
         if (currentMode === 'json') {
             jsonInputTextarea.disabled = true;
@@ -2344,13 +2997,16 @@ function showKiroAwsImportModal() {
             // 只有在导入失败时才重新启用提交按钮
             if (!importSuccess) {
                 submitBtn.disabled = false;
+                submitActsAsClose = false;
                 submitBtn.innerHTML = `<i class="fas fa-check"></i> <span data-i18n="oauth.kiro.awsConfirmImport">${t('oauth.kiro.awsConfirmImport')}</span>`;
                 
                 if (currentMode === 'json') {
                     jsonInputTextarea.disabled = false;
                 }
             } else {
-                // 导入成功后，保持提交按钮禁用状态，并显示成功图标
+                // 导入成功后，主按钮切换为完成态，再次点击可关闭弹窗
+                submitActsAsClose = true;
+                submitBtn.disabled = false;
                 submitBtn.innerHTML = `<i class="fas fa-check-circle"></i> <span>${t('common.success')}</span>`;
             }
         }

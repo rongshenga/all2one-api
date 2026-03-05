@@ -5,6 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import open from 'open';
 import axios from 'axios';
+import os from 'os';
 import { broadcastEvent } from '../services/ui-manager.js';
 import { autoLinkProviderConfigs } from '../services/service-manager.js';
 import { CONFIG } from '../core/config-manager.js';
@@ -22,6 +23,56 @@ const CODEX_OAUTH_CONFIG = {
     scopes: 'openid email profile offline_access',
     logPrefix: '[Codex Auth]'
 };
+
+/**
+ * 根据当前机器资源计算 Codex 导入并发配置
+ * 目标：默认尽可能高并发，同时给出合理上限防止资源过载
+ */
+function getCodexConcurrencyProfile() {
+    const logicalCpus = Math.max(1, os.cpus()?.length || 4);
+    const totalMemGB = Math.max(1, Math.floor(os.totalmem() / (1024 ** 3)));
+
+    // 导入阶段偏 I/O + 轻计算，可放宽并发（先计算保守基础值）
+    const cpuBasedImport = logicalCpus * 10;
+    const memoryBasedImport = totalMemGB * 2;
+    const baseImportConcurrency = Math.min(
+        256,
+        Math.max(24, Math.min(cpuBasedImport, memoryBasedImport))
+    );
+
+    const maxImportConcurrency = Math.min(
+        512,
+        Math.max(baseImportConcurrency, logicalCpus * 24, 128)
+    );
+
+    // 刷新阶段涉及上游鉴权接口，控制得更保守
+    const baseRefreshConcurrency = Math.min(
+        64,
+        Math.max(8, Math.floor(baseImportConcurrency * 0.25), logicalCpus * 2)
+    );
+
+    const maxRefreshConcurrency = Math.min(
+        128,
+        Math.max(baseRefreshConcurrency, logicalCpus * 6, 32)
+    );
+
+    // 最大化并发配置：默认直接使用当前机器上限档
+    const defaultImportConcurrency = maxImportConcurrency;
+    const defaultRefreshConcurrency = maxRefreshConcurrency;
+
+    return {
+        defaultImportConcurrency,
+        maxImportConcurrency,
+        defaultRefreshConcurrency,
+        maxRefreshConcurrency
+    };
+}
+
+const CODEX_CONCURRENCY_PROFILE = getCodexConcurrencyProfile();
+const DEFAULT_CODEX_IMPORT_CONCURRENCY = CODEX_CONCURRENCY_PROFILE.defaultImportConcurrency;
+const MAX_CODEX_IMPORT_CONCURRENCY = CODEX_CONCURRENCY_PROFILE.maxImportConcurrency;
+const DEFAULT_CODEX_REFRESH_CONCURRENCY = CODEX_CONCURRENCY_PROFILE.defaultRefreshConcurrency;
+const MAX_CODEX_REFRESH_CONCURRENCY = CODEX_CONCURRENCY_PROFILE.maxRefreshConcurrency;
 
 /**
  * 活动的服务器实例管理（与 gemini-oauth 一致）
@@ -676,6 +727,548 @@ export async function refreshCodexTokensWithRetry(refreshToken, config = {}, max
     }
 
     throw lastError;
+}
+
+/**
+ * 安全解析 JWT payload
+ * @param {string} token
+ * @returns {Object|null}
+ */
+function parseJwtPayloadSafe(token) {
+    try {
+        if (!token || typeof token !== 'string') return null;
+        const parts = token.split('.');
+        if (parts.length !== 3) return null;
+        const payload = Buffer.from(parts[1], 'base64url').toString('utf8');
+        return JSON.parse(payload);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 将过期时间候选值转换为 ISO 字符串
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function toExpiryIsoString(value) {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        const timestamp = value > 1e12 ? value : value * 1000;
+        const parsed = new Date(timestamp);
+        return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    }
+
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+
+        if (/^\d+$/.test(trimmed)) {
+            const numeric = Number(trimmed);
+            return toExpiryIsoString(numeric);
+        }
+
+        const parsed = new Date(trimmed);
+        return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    }
+
+    return null;
+}
+
+/**
+ * 判断对象是否包含 Codex 凭据关键字段
+ * @param {Object} value
+ * @returns {boolean}
+ */
+function hasCodexCredentialShape(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return [
+        'access_token',
+        'refresh_token',
+        'id_token',
+        'account_id',
+        'email',
+        'expired',
+        'exp'
+    ].some((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+/**
+ * 提取 Codex 凭据对象（支持常见嵌套结构）
+ * @param {Object} rawToken
+ * @returns {Object}
+ */
+function extractCodexCredentialPayload(rawToken) {
+    if (hasCodexCredentialShape(rawToken)) {
+        return rawToken;
+    }
+
+    const nestedKeys = ['token', 'credentials', 'auth', 'data', 'oauth', 'codex'];
+    for (const key of nestedKeys) {
+        const nested = rawToken?.[key];
+        if (hasCodexCredentialShape(nested)) {
+            return nested;
+        }
+    }
+
+    return rawToken;
+}
+
+/**
+ * 标准化导入的 Codex 凭据
+ * @param {Object} rawToken
+ * @returns {Object}
+ */
+function normalizeImportedCodexToken(rawToken) {
+    if (!rawToken || typeof rawToken !== 'object' || Array.isArray(rawToken)) {
+        throw new Error('Token 必须是 JSON 对象');
+    }
+
+    const payload = extractCodexCredentialPayload(rawToken);
+
+    const idToken = payload.id_token || rawToken.id_token || '';
+    const accessToken = payload.access_token || rawToken.access_token || '';
+    const refreshToken = payload.refresh_token || rawToken.refresh_token || '';
+
+    if (!accessToken) {
+        throw new Error('Token 缺少必需字段 access_token');
+    }
+
+    const idClaims = parseJwtPayloadSafe(idToken);
+    const accessClaims = parseJwtPayloadSafe(accessToken);
+    const authClaims = payload['https://api.openai.com/auth']
+        || rawToken['https://api.openai.com/auth']
+        || idClaims?.['https://api.openai.com/auth']
+        || accessClaims?.['https://api.openai.com/auth']
+        || {};
+
+    const profileClaims = payload['https://api.openai.com/profile']
+        || rawToken['https://api.openai.com/profile']
+        || accessClaims?.['https://api.openai.com/profile']
+        || {};
+
+    const email = payload.email
+        || rawToken.email
+        || idClaims?.email
+        || profileClaims?.email
+        || '';
+
+    const accountId = payload.account_id
+        || rawToken.account_id
+        || authClaims?.chatgpt_account_id
+        || idClaims?.sub
+        || accessClaims?.sub
+        || '';
+
+    const expired = toExpiryIsoString(payload.expired)
+        || toExpiryIsoString(rawToken.expired)
+        || toExpiryIsoString(payload.expire)
+        || toExpiryIsoString(rawToken.expire)
+        || toExpiryIsoString(payload.expires_at)
+        || toExpiryIsoString(rawToken.expires_at)
+        || toExpiryIsoString(payload.expiresAt)
+        || toExpiryIsoString(rawToken.expiresAt)
+        || toExpiryIsoString(payload.exp)
+        || toExpiryIsoString(rawToken.exp)
+        || toExpiryIsoString(accessClaims?.exp)
+        || toExpiryIsoString(idClaims?.exp)
+        || new Date(Date.now() + 3600 * 1000).toISOString();
+
+    return {
+        id_token: idToken,
+        access_token: accessToken,
+        refresh_token: refreshToken || undefined,
+        account_id: accountId || undefined,
+        last_refresh: payload.last_refresh || rawToken.last_refresh || new Date().toISOString(),
+        email: email || undefined,
+        type: 'codex',
+        expired,
+        session_id: payload.session_id || rawToken.session_id || undefined
+    };
+}
+
+/**
+ * 生成稳定指纹（避免在内存中存储超长 token）
+ * @param {string} value
+ * @returns {string}
+ */
+function stableHash(value) {
+    return crypto.createHash('sha1').update(value).digest('hex');
+}
+
+/**
+ * 生成身份指纹
+ * @param {string} email
+ * @param {string} accountId
+ * @returns {string|null}
+ */
+function buildIdentityKey(email, accountId) {
+    if (!email || !accountId) return null;
+    return `${String(email).toLowerCase()}#${String(accountId)}`;
+}
+
+/**
+ * 规范化并发参数
+ * @param {number} value
+ * @param {number} defaultValue
+ * @param {number} maxValue
+ * @returns {number}
+ */
+function normalizeConcurrency(value, defaultValue, maxValue) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue;
+    return Math.max(1, Math.min(parsed, maxValue));
+}
+
+/**
+ * 创建并发限制器
+ * @param {number} maxConcurrency
+ * @returns {(task: () => Promise<any>) => Promise<any>}
+ */
+function createLimiter(maxConcurrency) {
+    let activeCount = 0;
+    const queue = [];
+
+    const runNext = () => {
+        if (activeCount >= maxConcurrency || queue.length === 0) return;
+        const job = queue.shift();
+        activeCount++;
+        Promise.resolve()
+            .then(job.task)
+            .then(job.resolve)
+            .catch(job.reject)
+            .finally(() => {
+                activeCount--;
+                runNext();
+            });
+    };
+
+    return (task) => new Promise((resolve, reject) => {
+        queue.push({ task, resolve, reject });
+        runNext();
+    });
+}
+
+/**
+ * 并发执行索引任务
+ * @param {number} total
+ * @param {number} concurrency
+ * @param {(index: number) => Promise<void>} worker
+ * @returns {Promise<void>}
+ */
+async function runWithConcurrency(total, concurrency, worker) {
+    if (total <= 0) return;
+    let cursor = 0;
+
+    const workers = Array.from({ length: Math.min(total, concurrency) }, async () => {
+        while (true) {
+            const currentIndex = cursor;
+            cursor++;
+            if (currentIndex >= total) break;
+            await worker(currentIndex);
+        }
+    });
+
+    await Promise.all(workers);
+}
+
+/**
+ * 安全文件名片段
+ * @param {string} email
+ * @param {number} index
+ * @returns {string}
+ */
+function getSafeEmailForFilename(email, index) {
+    const base = (email || `unknown-${index + 1}`).toString();
+    const sanitized = base.replace(/[\\/:*?"<>|]/g, '_').trim();
+    return sanitized || `unknown-${index + 1}`;
+}
+
+/**
+ * 扫描已有 Codex 凭据，构建去重索引
+ * @param {string} targetDir
+ * @returns {Promise<{refreshTokenIndex: Map<string, string>, identityIndex: Map<string, string>}>}
+ */
+async function buildCodexDuplicateIndex(targetDir) {
+    const refreshTokenIndex = new Map();
+    const identityIndex = new Map();
+
+    if (!fs.existsSync(targetDir)) {
+        return { refreshTokenIndex, identityIndex };
+    }
+
+    const files = await fs.promises.readdir(targetDir);
+    for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+
+        const fullPath = path.join(targetDir, file);
+        try {
+            const content = await fs.promises.readFile(fullPath, 'utf8');
+            const parsed = JSON.parse(content);
+            const payload = extractCodexCredentialPayload(parsed);
+
+            const refreshToken = payload.refresh_token || parsed.refresh_token;
+            if (refreshToken && typeof refreshToken === 'string') {
+                refreshTokenIndex.set(stableHash(refreshToken), path.relative(process.cwd(), fullPath));
+            }
+
+            const identityKey = buildIdentityKey(
+                payload.email || parsed.email,
+                payload.account_id || parsed.account_id
+            );
+            if (identityKey) {
+                identityIndex.set(identityKey, path.relative(process.cwd(), fullPath));
+            }
+        } catch {
+            // 忽略损坏/非标准文件
+        }
+    }
+
+    return { refreshTokenIndex, identityIndex };
+}
+
+/**
+ * 批量导入 Codex Token（流式版本，支持实时进度）
+ * @param {Object[]} tokens - Token 对象数组
+ * @param {Object} options - 导入选项
+ * @param {Function} onProgress - 进度回调
+ * @returns {Promise<Object>}
+ */
+export async function batchImportCodexTokensStream(tokens, options = {}, onProgress = null) {
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+        throw new Error('tokens array is required and must not be empty');
+    }
+
+    const skipDuplicateCheck = options.skipDuplicateCheck !== false;
+    const importConcurrency = normalizeConcurrency(
+        options.concurrency,
+        DEFAULT_CODEX_IMPORT_CONCURRENCY,
+        MAX_CODEX_IMPORT_CONCURRENCY
+    );
+    const refreshAfterImport = options.refreshAfterImport === true;
+    const refreshConcurrency = normalizeConcurrency(
+        options.refreshConcurrency,
+        DEFAULT_CODEX_REFRESH_CONCURRENCY,
+        MAX_CODEX_REFRESH_CONCURRENCY
+    );
+
+    const targetDir = path.join(process.cwd(), 'configs', 'codex');
+    await fs.promises.mkdir(targetDir, { recursive: true });
+
+    const results = {
+        total: tokens.length,
+        success: 0,
+        failed: 0,
+        details: []
+    };
+
+    const details = new Array(tokens.length);
+    const importedCredPaths = [];
+    let processedCount = 0;
+
+    const { refreshTokenIndex, identityIndex } = skipDuplicateCheck
+        ? { refreshTokenIndex: new Map(), identityIndex: new Map() }
+        : await buildCodexDuplicateIndex(targetDir);
+
+    const inBatchRefreshTokenSet = new Set();
+    const inBatchIdentitySet = new Set();
+    const refreshLimiter = createLimiter(refreshConcurrency);
+
+    const handleProgress = (index, current) => {
+        processedCount++;
+        if (current.success) {
+            results.success++;
+        } else {
+            results.failed++;
+        }
+        details[index] = current;
+
+        if (onProgress) {
+            onProgress({
+                index: index + 1,
+                total: tokens.length,
+                processedCount,
+                current,
+                successCount: results.success,
+                failedCount: results.failed
+            });
+        }
+    };
+
+    await runWithConcurrency(tokens.length, importConcurrency, async (index) => {
+        const rawToken = tokens[index];
+        let reservedRefreshHash = null;
+        let reservedIdentityKey = null;
+
+        try {
+            let normalized = normalizeImportedCodexToken(rawToken);
+
+            if (!skipDuplicateCheck) {
+                const refreshToken = normalized.refresh_token;
+                if (refreshToken) {
+                    const refreshHash = stableHash(refreshToken);
+                    const existingPath = refreshTokenIndex.get(refreshHash);
+                    if (existingPath) {
+                        handleProgress(index, {
+                            index: index + 1,
+                            success: false,
+                            error: 'duplicate',
+                            reason: 'refresh_token',
+                            existingPath
+                        });
+                        return;
+                    }
+                    if (inBatchRefreshTokenSet.has(refreshHash)) {
+                        handleProgress(index, {
+                            index: index + 1,
+                            success: false,
+                            error: 'duplicate',
+                            reason: 'refresh_token_in_batch'
+                        });
+                        return;
+                    }
+                    inBatchRefreshTokenSet.add(refreshHash);
+                    reservedRefreshHash = refreshHash;
+                }
+
+                const identityKey = buildIdentityKey(normalized.email, normalized.account_id);
+                if (identityKey) {
+                    const existingPath = identityIndex.get(identityKey);
+                    if (existingPath) {
+                        if (reservedRefreshHash) {
+                            inBatchRefreshTokenSet.delete(reservedRefreshHash);
+                            reservedRefreshHash = null;
+                        }
+                        handleProgress(index, {
+                            index: index + 1,
+                            success: false,
+                            error: 'duplicate',
+                            reason: 'email_account_id',
+                            existingPath
+                        });
+                        return;
+                    }
+                    if (inBatchIdentitySet.has(identityKey)) {
+                        if (reservedRefreshHash) {
+                            inBatchRefreshTokenSet.delete(reservedRefreshHash);
+                            reservedRefreshHash = null;
+                        }
+                        handleProgress(index, {
+                            index: index + 1,
+                            success: false,
+                            error: 'duplicate',
+                            reason: 'email_account_id_in_batch'
+                        });
+                        return;
+                    }
+                    inBatchIdentitySet.add(identityKey);
+                    reservedIdentityKey = identityKey;
+                }
+            }
+
+            const refreshMeta = {
+                attempted: false,
+                success: false,
+                skipped: false,
+                message: ''
+            };
+
+            if (refreshAfterImport) {
+                if (normalized.refresh_token) {
+                    refreshMeta.attempted = true;
+                    try {
+                        const refreshedTokens = await refreshLimiter(() => refreshCodexTokensWithRetry(normalized.refresh_token, CONFIG));
+                        normalized = {
+                            ...normalized,
+                            ...refreshedTokens,
+                            refresh_token: refreshedTokens.refresh_token || normalized.refresh_token,
+                            last_refresh: new Date().toISOString(),
+                            type: 'codex',
+                            expired: toExpiryIsoString(
+                                refreshedTokens.expired
+                                || refreshedTokens.expire
+                                || refreshedTokens.expires_at
+                                || refreshedTokens.expiresAt
+                            ) || normalized.expired
+                        };
+                        refreshMeta.success = true;
+                        refreshMeta.message = 'refresh_success';
+                    } catch (error) {
+                        refreshMeta.success = false;
+                        refreshMeta.message = error.message || 'refresh_failed';
+                    }
+                } else {
+                    refreshMeta.skipped = true;
+                    refreshMeta.message = 'missing_refresh_token';
+                }
+            }
+
+            const safeEmail = getSafeEmailForFilename(normalized.email, index);
+            const filename = `${Date.now()}_${index}_${crypto.randomBytes(3).toString('hex')}_codex-${safeEmail}.json`;
+            const credPath = path.join(targetDir, filename);
+            await fs.promises.writeFile(credPath, JSON.stringify(normalized, null, 2), { mode: 0o600 });
+
+            const relativePath = path.relative(process.cwd(), credPath);
+            importedCredPaths.push(relativePath);
+
+            if (!skipDuplicateCheck) {
+                if (reservedRefreshHash) {
+                    refreshTokenIndex.set(reservedRefreshHash, relativePath);
+                }
+                if (reservedIdentityKey) {
+                    identityIndex.set(reservedIdentityKey, relativePath);
+                }
+            }
+
+            const current = {
+                index: index + 1,
+                success: true,
+                path: relativePath,
+                email: normalized.email || null
+            };
+
+            if (refreshAfterImport) {
+                current.refresh = refreshMeta;
+            }
+
+            if (refreshAfterImport && refreshMeta.attempted && !refreshMeta.success) {
+                current.warning = refreshMeta.message;
+            }
+
+            handleProgress(index, current);
+        } catch (error) {
+            if (!skipDuplicateCheck) {
+                if (reservedRefreshHash) {
+                    inBatchRefreshTokenSet.delete(reservedRefreshHash);
+                }
+                if (reservedIdentityKey) {
+                    inBatchIdentitySet.delete(reservedIdentityKey);
+                }
+            }
+
+            handleProgress(index, {
+                index: index + 1,
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
+    results.details = details;
+
+    if (importedCredPaths.length > 0) {
+        await autoLinkProviderConfigs(CONFIG, { credPaths: importedCredPaths });
+        broadcastEvent('oauth_batch_success', {
+            provider: 'openai-codex-oauth',
+            count: importedCredPaths.length,
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    return results;
 }
 
 /**

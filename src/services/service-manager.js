@@ -42,6 +42,10 @@ export async function autoLinkProviderConfigs(config, options = {}) {
             totalNewProviders = 1;
             allNewProviders[result.displayName] = [result.provider];
         }
+    } else if (Array.isArray(options.credPaths) && options.credPaths.length > 0) {
+        const batchResult = await linkBatchCredentials(config, options.credPaths);
+        totalNewProviders = batchResult.totalNewProviders;
+        Object.assign(allNewProviders, batchResult.allNewProviders);
     } else {
         // 遍历所有提供商映射
         for (const mapping of PROVIDER_MAPPINGS) {
@@ -115,6 +119,113 @@ export async function autoLinkProviderConfigs(config, options = {}) {
         providerPoolManager.initializeProviderStatus();
     }
     return config.providerPools;
+}
+
+/**
+ * 批量关联凭据文件到对应提供商（单次保存）
+ * @param {Object} config - 服务器配置对象
+ * @param {string[]} credPaths - 凭据文件路径列表（相对或绝对路径）
+ * @returns {Promise<{totalNewProviders: number, allNewProviders: Object}>}
+ */
+async function linkBatchCredentials(config, credPaths) {
+    const allNewProviders = {};
+    let totalNewProviders = 0;
+
+    const groupedByProvider = new Map();
+    const projectDir = process.cwd();
+
+    // 预处理并按 providerType 分组，避免后续重复判断目录归属
+    for (const rawPath of credPaths) {
+        try {
+            const absolutePath = path.isAbsolute(rawPath) ? rawPath : path.join(projectDir, rawPath);
+
+            if (!fs.existsSync(absolutePath)) {
+                continue;
+            }
+
+            if (path.extname(absolutePath).toLowerCase() !== '.json') {
+                continue;
+            }
+
+            const relativePath = path.relative(projectDir, absolutePath);
+            let matchedMapping = null;
+            for (const mapping of PROVIDER_MAPPINGS) {
+                const providerRoot = path.join(projectDir, 'configs', mapping.dirName);
+                const resolvedRoot = path.resolve(providerRoot);
+                const resolvedFile = path.resolve(absolutePath);
+                if (resolvedFile === resolvedRoot || resolvedFile.startsWith(resolvedRoot + path.sep)) {
+                    matchedMapping = mapping;
+                    break;
+                }
+            }
+
+            if (!matchedMapping) {
+                continue;
+            }
+
+            if (!groupedByProvider.has(matchedMapping.providerType)) {
+                groupedByProvider.set(matchedMapping.providerType, {
+                    mapping: matchedMapping,
+                    paths: []
+                });
+            }
+            groupedByProvider.get(matchedMapping.providerType).paths.push(relativePath);
+        } catch (error) {
+            logger.warn(`[Auto-Link] Skip invalid credential path ${rawPath}: ${error.message}`);
+        }
+    }
+
+    // 按 providerType 批量关联，避免每条都重复构建 linkedPaths
+    for (const [, group] of groupedByProvider) {
+        const { mapping, paths } = group;
+        const { providerType, credPathKey, defaultCheckModel, displayName, needsProjectId, urlKeys } = mapping;
+
+        if (!config.providerPools[providerType]) {
+            config.providerPools[providerType] = [];
+        }
+
+        const linkedPaths = new Set();
+        for (const provider of config.providerPools[providerType]) {
+            if (provider[credPathKey]) {
+                addToUsedPaths(linkedPaths, provider[credPathKey]);
+            }
+        }
+
+        const newProviders = [];
+        for (const relativePath of paths) {
+            const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+            const prefixedPath = normalizedRelativePath.startsWith('./')
+                ? normalizedRelativePath
+                : `./${normalizedRelativePath}`;
+
+            if (linkedPaths.has(normalizedRelativePath) || linkedPaths.has(prefixedPath)) {
+                continue;
+            }
+
+            const formattedCredPath = formatSystemPath(relativePath);
+            const newProvider = createProviderConfig({
+                credPathKey,
+                credPath: formattedCredPath,
+                defaultCheckModel,
+                needsProjectId,
+                urlKeys
+            });
+
+            config.providerPools[providerType].push(newProvider);
+            newProviders.push(newProvider);
+            addToUsedPaths(linkedPaths, formattedCredPath);
+        }
+
+        if (newProviders.length > 0) {
+            totalNewProviders += newProviders.length;
+            allNewProviders[displayName] = (allNewProviders[displayName] || []).concat(newProviders);
+        }
+    }
+
+    return {
+        totalNewProviders,
+        allNewProviders
+    };
 }
 
 /**
