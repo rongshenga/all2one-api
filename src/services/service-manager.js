@@ -426,11 +426,16 @@ export async function initApiService(config, isReady = false) {
             }
             
             logger.info(`[Initialization] Initializing ${providerConfigs.length} node(s) for provider '${providerType}'...`);
+            let providerSucceeded = 0;
+            let providerFailed = 0;
+            let providerSkippedDisabled = 0;
+            const failedNodeSamples = [];
             
             // 初始化该提供商类型的所有节点
             for (const providerConfig of providerConfigs) {
                 // 跳过已禁用的节点
                 if (providerConfig.isDisabled) {
+                    providerSkippedDisabled++;
                     continue;
                 }
                 
@@ -445,14 +450,31 @@ export async function initApiService(config, isReady = false) {
                     // 初始化服务适配器
                     getServiceAdapter(nodeConfig);
                     totalInitialized++;
+                    providerSucceeded++;
                     
                     const identifier = providerConfig.customName || providerConfig.uuid || 'unknown';
-                    logger.info(`  ✓ Initialized node: ${identifier}`);
+                    logger.debug(`[Initialization] ✓ Initialized node: ${identifier} (${providerType})`);
                 } catch (error) {
                     totalFailed++;
+                    providerFailed++;
                     const identifier = providerConfig.customName || providerConfig.uuid || 'unknown';
-                    logger.warn(`  ✗ Failed to initialize node ${identifier}: ${error.message}`);
+                    if (failedNodeSamples.length < 5) {
+                        failedNodeSamples.push(identifier);
+                    }
+                    logger.debug(`[Initialization] ✗ Failed to initialize node ${identifier} (${providerType}): ${error.message}`);
                 }
+            }
+
+            logger.info(
+                `[Initialization] Provider '${providerType}' initialization summary: total=${providerConfigs.length}, ` +
+                `disabledSkipped=${providerSkippedDisabled}, succeeded=${providerSucceeded}, failed=${providerFailed}`
+            );
+            if (providerFailed > 0) {
+                const sampleText = failedNodeSamples.join(', ');
+                logger.warn(
+                    `[Initialization] Provider '${providerType}' has ${providerFailed} failed node(s). ` +
+                    `Sample: ${sampleText || 'none'}`
+                );
             }
         }
         

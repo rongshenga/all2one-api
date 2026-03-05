@@ -208,7 +208,7 @@ export class GeminiApiService {
         
         if (proxyConfig) {
             oauth2Options.transporterOptions = proxyConfig;
-            logger.info('[Gemini] Using proxy for OAuth2Client');
+            logger.debug('[Gemini] Using proxy for OAuth2Client');
         } else {
             oauth2Options.transporterOptions = {
                 agent: httpsAgent,
@@ -234,7 +234,7 @@ export class GeminiApiService {
 
     async initialize() {
         if (this.isInitialized) return;
-        logger.info('[Gemini] Initializing Gemini API Service...');
+        logger.debug('[Gemini] Initializing Gemini API Service...');
         // 注意：V2 读写分离架构下，初始化不再执行同步认证/刷新逻辑
         // 仅执行基础的凭证加载
         await this.loadCredentials();
@@ -242,15 +242,15 @@ export class GeminiApiService {
         if (!this.projectId) {
             this.projectId = await this.discoverProjectAndModels();
         } else {
-            logger.info(`[Gemini] Using provided Project ID: ${this.projectId}`);
+            logger.debug(`[Gemini] Using provided Project ID: ${this.projectId}`);
             this.availableModels = GEMINI_MODELS;
-            logger.info(`[Gemini] Using fixed models: [${this.availableModels.join(', ')}]`);
+            logger.debug(`[Gemini] Using fixed models: [${this.availableModels.join(', ')}]`);
         }
         if (this.projectId === 'default') {
             throw new Error("Error: 'default' is not a valid project ID. Please provide a valid Google Cloud Project ID using the --project-id argument.");
         }
         this.isInitialized = true;
-        logger.info(`[Gemini] Initialization complete. Project ID: ${this.projectId}`);
+        logger.debug(`[Gemini] Initialization complete. Project ID: ${this.projectId}`);
     }
 
     /**
@@ -262,7 +262,7 @@ export class GeminiApiService {
                 const decoded = Buffer.from(this.oauthCredsBase64, 'base64').toString('utf8');
                 const credentials = JSON.parse(decoded);
                 this.authClient.setCredentials(credentials);
-                logger.info('[Gemini Auth] Credentials loaded successfully from base64 string.');
+                logger.debug('[Gemini Auth] Credentials loaded successfully from base64 string.');
                 return;
             } catch (error) {
                 logger.error('[Gemini Auth] Failed to parse base64 OAuth credentials:', error);
@@ -274,7 +274,7 @@ export class GeminiApiService {
             const data = await fs.readFile(credPath, "utf8");
             const credentials = JSON.parse(data);
             this.authClient.setCredentials(credentials);
-            logger.info('[Gemini Auth] Credentials loaded successfully from file.');
+            logger.debug('[Gemini Auth] Credentials loaded successfully from file.');
         } catch (error) {
             if (error.code === 'ENOENT') {
                 logger.debug(`[Gemini Auth] Credentials file not found: ${credPath}`);
@@ -302,16 +302,16 @@ export class GeminiApiService {
             const credPath = this.oauthCredsFilePath || path.join(os.homedir(), CREDENTIALS_DIR, CREDENTIALS_FILE);
             try {
                 if (this.authClient.credentials.refresh_token) {
-                    logger.info('[Gemini Auth] Token expiring soon or force refresh requested. Refreshing token...');
+                    logger.debug('[Gemini Auth] Token expiring soon or force refresh requested. Refreshing token...');
                     const { credentials: newCredentials } = await this.authClient.refreshAccessToken();
                     this.authClient.setCredentials(newCredentials);
                     
                     // 如果不是从 base64 加载的，则保存到文件
                     if (!this.oauthCredsBase64) {
                         await this._saveCredentialsToFile(credPath, newCredentials);
-                        logger.info('[Gemini Auth] Token refreshed and saved successfully.');
+                        logger.debug('[Gemini Auth] Token refreshed and saved successfully.');
                     } else {
-                        logger.info('[Gemini Auth] Token refreshed successfully (Base64 source).');
+                        logger.debug('[Gemini Auth] Token refreshed successfully (Base64 source).');
                     }
 
                     // 刷新成功，重置 PoolManager 中的刷新状态并标记为健康
@@ -389,13 +389,13 @@ export class GeminiApiService {
 
     async discoverProjectAndModels() {
         if (this.projectId) {
-            logger.info(`[Gemini] Using pre-configured Project ID: ${this.projectId}`);
+            logger.debug(`[Gemini] Using pre-configured Project ID: ${this.projectId}`);
             return this.projectId;
         }
 
-        logger.info('[Gemini] Discovering Project ID...');
+        logger.debug('[Gemini] Discovering Project ID...');
         this.availableModels = GEMINI_MODELS;
-        logger.info(`[Gemini] Using fixed models: [${this.availableModels.join(', ')}]`);
+        logger.debug(`[Gemini] Using fixed models: [${this.availableModels.join(', ')}]`);
         try {
             const initialProjectId = ""
             // Prepare client metadata
@@ -638,7 +638,7 @@ export class GeminiApiService {
     }
 
     async generateContent(model, requestBody) {
-        logger.info(`[Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
+        logger.debug(`[Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
         
         // 临时存储 monitorRequestId
         if (requestBody._monitorRequestId) {
@@ -653,7 +653,7 @@ export class GeminiApiService {
         if (this.isExpiryDateNear()) {
             const poolManager = getProviderPoolManager();
             if (poolManager && this.uuid) {
-                logger.info(`[Gemini] Token is near expiry, marking credential ${this.uuid} for refresh`);
+                logger.debug(`[Gemini] Token is near expiry, marking credential ${this.uuid} for refresh`);
                 poolManager.markProviderNeedRefresh(MODEL_PROVIDER.GEMINI_CLI, {
                     uuid: this.uuid
                 });
@@ -672,7 +672,7 @@ export class GeminiApiService {
     }
 
     async * generateContentStream(model, requestBody) {
-        logger.info(`[Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
+        logger.debug(`[Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
 
         // 临时存储 monitorRequestId
         if (requestBody._monitorRequestId) {
@@ -687,7 +687,7 @@ export class GeminiApiService {
         if (this.isExpiryDateNear()) {
             const poolManager = getProviderPoolManager();
             if (poolManager && this.uuid) {
-                logger.info(`[Gemini] Token is near expiry, marking credential ${this.uuid} for refresh`);
+                logger.debug(`[Gemini] Token is near expiry, marking credential ${this.uuid} for refresh`);
                 poolManager.markProviderNeedRefresh(MODEL_PROVIDER.GEMINI_CLI, {
                     uuid: this.uuid
                 });
@@ -725,7 +725,7 @@ export class GeminiApiService {
         try {
             const nearMinutes = 20;
             const { message, isNearExpiry } = formatExpiryLog('Gemini', this.authClient.credentials.expiry_date, nearMinutes);
-            logger.info(message);
+            logger.debug(message);
             return isNearExpiry;
         } catch (error) {
             logger.error(`[Gemini] Error checking expiry date: ${error.message}`);
@@ -741,7 +741,7 @@ export class GeminiApiService {
     async _saveCredentialsToFile(filePath, credentials) {
         try {
             await fs.writeFile(filePath, JSON.stringify(credentials, null, 2));
-            logger.info(`[Gemini Auth] Credentials saved to ${filePath}`);
+            logger.debug(`[Gemini Auth] Credentials saved to ${filePath}`);
         } catch (error) {
             logger.error(`[Gemini Auth] Failed to save credentials to ${filePath}: ${error.message}`);
             throw error;
@@ -849,4 +849,3 @@ export class GeminiApiService {
         }
     }
 }
-

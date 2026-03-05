@@ -396,7 +396,7 @@ export class KiroApiService {
         this.credsBase64 = config.KIRO_OAUTH_CREDS_BASE64;
         this.useSystemProxy = config?.USE_SYSTEM_PROXY_KIRO ?? false;
         this.uuid = config?.uuid; // 获取多节点配置的 uuid
-        logger.info(`[Kiro] System proxy ${this.useSystemProxy ? 'enabled' : 'disabled'}`);
+        logger.debug(`[Kiro] System proxy ${this.useSystemProxy ? 'enabled' : 'disabled'}`);
         // this.accessToken = config.KIRO_ACCESS_TOKEN;
         // this.refreshToken = config.KIRO_REFRESH_TOKEN;
         // this.clientId = config.KIRO_CLIENT_ID;
@@ -428,7 +428,7 @@ export class KiroApiService {
  
     async initialize() {
         if (this.isInitialized) return;
-        logger.info('[Kiro] Initializing Kiro API Service...');
+        logger.debug('[Kiro] Initializing Kiro API Service...');
         // 注意：V2 读写分离架构下，初始化不再执行同步认证/刷新逻辑
         // 仅执行基础的凭证加载
         await this.loadCredentials();
@@ -2878,7 +2878,7 @@ async saveCredentialsToFile(filePath, newData) {
             const expirationTime = new Date(this.expiresAt);
             const nearMinutes = 30;
             const { message, isNearExpiry } = formatExpiryLog('Kiro', expirationTime.getTime(), nearMinutes);
-            logger.info(message);
+            logger.debug(message);
             return isNearExpiry;
         } catch (error) {
             logger.error(`[Kiro] Error checking expiry date: ${this.expiresAt}, Error: ${error.message}`);

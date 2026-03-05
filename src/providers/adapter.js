@@ -135,7 +135,7 @@ export class GeminiApiServiceAdapter extends ApiServiceAdapter {
             await this.geminiApiService.initialize();
         }
         if(this.isExpiryDateNear()===true){
-            logger.info(`[Gemini] Expiry date is near, refreshing token...`);
+            logger.debug(`[Gemini] Expiry date is near, refreshing token...`);
             return this.geminiApiService.initializeAuth(true);
         }
         return Promise.resolve();
@@ -145,7 +145,7 @@ export class GeminiApiServiceAdapter extends ApiServiceAdapter {
         if (!this.geminiApiService.isInitialized) {
             await this.geminiApiService.initialize();
         }
-        logger.info(`[Gemini] Force refreshing token...`);
+        logger.debug(`[Gemini] Force refreshing token...`);
         return this.geminiApiService.initializeAuth(true);
     }
 
@@ -202,7 +202,7 @@ export class AntigravityApiServiceAdapter extends ApiServiceAdapter {
             await this.antigravityApiService.initialize();
         }
         if (this.isExpiryDateNear() === true) {
-            logger.info(`[Antigravity] Expiry date is near, refreshing token...`);
+            logger.debug(`[Antigravity] Expiry date is near, refreshing token...`);
             return this.antigravityApiService.initializeAuth(true);
         }
         return Promise.resolve();
@@ -212,7 +212,7 @@ export class AntigravityApiServiceAdapter extends ApiServiceAdapter {
         if (!this.antigravityApiService.isInitialized) {
             await this.antigravityApiService.initialize();
         }
-        logger.info(`[Antigravity] Force refreshing token...`);
+        logger.debug(`[Antigravity] Force refreshing token...`);
         return this.antigravityApiService.initializeAuth(true);
     }
 
@@ -390,7 +390,7 @@ export class KiroApiServiceAdapter extends ApiServiceAdapter {
             await this.kiroApiService.initialize();
         }
         if(this.isExpiryDateNear()===true){
-            logger.info(`[Kiro] Expiry date is near, refreshing token...`);
+            logger.debug(`[Kiro] Expiry date is near, refreshing token...`);
             return this.kiroApiService.initializeAuth(true);
         }
         return Promise.resolve();
@@ -400,7 +400,7 @@ export class KiroApiServiceAdapter extends ApiServiceAdapter {
         if (!this.kiroApiService.isInitialized) {
             await this.kiroApiService.initialize();
         }
-        logger.info(`[Kiro] Force refreshing token...`);
+        logger.debug(`[Kiro] Force refreshing token...`);
         return this.kiroApiService.initializeAuth(true);
     }
 
@@ -466,7 +466,7 @@ export class QwenApiServiceAdapter extends ApiServiceAdapter {
             await this.qwenApiService.initialize();
         }
         if (this.isExpiryDateNear()) {
-            logger.info(`[Qwen] Expiry date is near, refreshing token...`);
+            logger.debug(`[Qwen] Expiry date is near, refreshing token...`);
             return this.qwenApiService._initializeAuth(true);
         }
         return Promise.resolve();
@@ -476,7 +476,7 @@ export class QwenApiServiceAdapter extends ApiServiceAdapter {
         if (!this.qwenApiService.isInitialized) {
             await this.qwenApiService.initialize();
         }
-        logger.info(`[Qwen] Force refreshing token...`);
+        logger.debug(`[Qwen] Force refreshing token...`);
         return this.qwenApiService._initializeAuth(true);
     }
 
@@ -521,7 +521,7 @@ export class IFlowApiServiceAdapter extends ApiServiceAdapter {
             await this.iflowApiService.initialize();
         }
         if (this.isExpiryDateNear()) {
-            logger.info(`[iFlow] Expiry date is near, refreshing API key...`);
+            logger.debug(`[iFlow] Expiry date is near, refreshing API key...`);
             await this.iflowApiService.initializeAuth(true);
         }
         return Promise.resolve();
@@ -531,7 +531,7 @@ export class IFlowApiServiceAdapter extends ApiServiceAdapter {
         if (!this.iflowApiService.isInitialized) {
             await this.iflowApiService.initialize();
         }
-        logger.info(`[iFlow] Force refreshing API key...`);
+        logger.debug(`[iFlow] Force refreshing API key...`);
         return this.iflowApiService.initializeAuth(true);
     }
 
@@ -573,7 +573,7 @@ export class CodexApiServiceAdapter extends ApiServiceAdapter {
             await this.codexApiService.initialize();
         }
         if (this.isExpiryDateNear()) {
-            logger.info(`[Codex] Expiry date is near, refreshing token...`);
+            logger.debug(`[Codex] Expiry date is near, refreshing token...`);
             await this.codexApiService.refreshAccessToken();
         }
         return Promise.resolve();
@@ -583,7 +583,7 @@ export class CodexApiServiceAdapter extends ApiServiceAdapter {
         if (!this.codexApiService.isInitialized) {
             await this.codexApiService.initialize();
         }
-        logger.info(`[Codex] Force refreshing token...`);
+        logger.debug(`[Codex] Force refreshing token...`);
         return this.codexApiService.refreshAccessToken();
     }
 

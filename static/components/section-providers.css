@@ -601,26 +601,40 @@
 
 .provider-filter-btn {
     border: 1px solid var(--neutral-300);
-    background: var(--bg-primary);
-    color: var(--neutral-700);
+    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--neutral-100) 100%);
+    color: var(--neutral-500);
     border-radius: 8px;
     padding: 6px 12px;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
+    position: relative;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .provider-filter-btn:hover {
     border-color: var(--primary-color);
     color: var(--primary-color);
+    box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.22), 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
 .provider-filter-btn.active {
-    border-color: var(--primary-color);
+    border-color: #2dd4bf;
     color: var(--white);
-    background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
-    box-shadow: 0 2px 8px var(--primary-30);
+    background: linear-gradient(135deg, #0ea5e9 0%, #14b8a6 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 2px rgba(20, 184, 166, 0.35), 0 8px 18px rgba(13, 148, 136, 0.32);
+    transform: translateY(-1px);
+}
+
+.provider-filter-btn.active:hover {
+    border-color: #5eead4;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 0 0 2px rgba(94, 234, 212, 0.42), 0 10px 22px rgba(13, 148, 136, 0.38);
+}
+
+.provider-filter-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.35), 0 0 0 4px rgba(94, 234, 212, 0.25);
 }
 
 .provider-empty-state {
@@ -1102,6 +1116,32 @@
     background: linear-gradient(135deg, var(--neutral-600) 0%, var(--neutral-700) 100%);
 }
 
+/* 刷新不健康UUID按钮：提高对比度，避免看起来像禁用态 */
+.provider-summary-actions .btn-refresh-unhealthy-uuids {
+    background: linear-gradient(135deg, #334155 0%, #1e293b 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid #475569 !important;
+    text-shadow: 0 1px 1px rgba(15, 23, 42, 0.35);
+    box-shadow: 0 2px 10px rgba(30, 41, 59, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.provider-summary-actions .btn-refresh-unhealthy-uuids i,
+.provider-summary-actions .btn-refresh-unhealthy-uuids span {
+    color: inherit;
+}
+
+.provider-summary-actions .btn-refresh-unhealthy-uuids:hover {
+    transform: translateY(-1px);
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
+    border-color: #64748b !important;
+    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.35), 0 0 0 1px rgba(100, 116, 139, 0.35);
+}
+
+.provider-summary-actions .btn-refresh-unhealthy-uuids:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.35), 0 0 0 4px rgba(203, 213, 225, 0.25);
+}
+
 /* 不支持的模型选择器样式 */
 .not-supported-models-section {
     grid-column: 1 / -1;
@@ -1499,9 +1539,21 @@
 [data-theme="dark"] .provider-summary { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%); border-color: var(--border-color); }
 [data-theme="dark"] .provider-filter-bar { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%); border-color: var(--border-color); }
 [data-theme="dark"] .provider-filter-label { color: var(--text-secondary); }
-[data-theme="dark"] .provider-filter-btn { background: var(--bg-primary); border-color: var(--border-color); color: var(--text-secondary); }
-[data-theme="dark"] .provider-filter-btn:hover { color: var(--primary-color); border-color: var(--primary-color); }
+[data-theme="dark"] .provider-filter-btn { background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%); border-color: #475569; color: #94a3b8; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+[data-theme="dark"] .provider-filter-btn:hover { color: #d1fae5; border-color: #14b8a6; box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.35), 0 6px 14px rgba(15, 23, 42, 0.45); }
+[data-theme="dark"] .provider-filter-btn.active { border-color: #5eead4; color: #ffffff; background: linear-gradient(135deg, #0ea5e9 0%, #14b8a6 100%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 0 0 2px rgba(94, 234, 212, 0.45), 0 10px 22px rgba(14, 165, 233, 0.38); }
+[data-theme="dark"] .provider-filter-btn.active:hover { border-color: #99f6e4; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 0 2px rgba(153, 246, 228, 0.5), 0 12px 24px rgba(14, 165, 233, 0.42); }
 [data-theme="dark"] .provider-empty-state { background: var(--bg-secondary); border-color: var(--border-color); color: var(--text-secondary); }
+[data-theme="dark"] .provider-summary-actions .btn-refresh-unhealthy-uuids {
+    background: linear-gradient(135deg, #475569 0%, #334155 100%) !important;
+    border-color: #64748b !important;
+    box-shadow: 0 2px 12px rgba(2, 6, 23, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+[data-theme="dark"] .provider-summary-actions .btn-refresh-unhealthy-uuids:hover {
+    background: linear-gradient(135deg, #64748b 0%, #475569 100%) !important;
+    border-color: #94a3b8 !important;
+    box-shadow: 0 6px 16px rgba(2, 6, 23, 0.62), 0 0 0 1px rgba(148, 163, 184, 0.38);
+}
 [data-theme="dark"] .add-provider-form { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%); border-color: var(--border-color); }
 [data-theme="dark"] .provider-item-detail { border-color: var(--border-color); }
 [data-theme="dark"] .provider-item-header { background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%); }

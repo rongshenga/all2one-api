@@ -120,7 +120,7 @@ export class ProviderPoolManager {
                             summary.nearExpiry++;
                             summary.enqueued++;
                             nearExpiryByProvider[providerType] = (nearExpiryByProvider[providerType] || 0) + 1;
-                            this._log('warn', `Node ${providerStatus.uuid} (${providerType}) is near expiration. Enqueuing refresh...`);
+                            this._log('debug', `Node ${providerStatus.uuid} (${providerType}) is near expiration. Enqueuing refresh...`);
                             this._enqueueRefresh(providerType, providerStatus);
                         } else {
                             this._log('debug', `Node ${providerStatus.uuid} (${providerType}) is not near expiration. Skipping refresh.`);
@@ -144,6 +144,9 @@ export class ProviderPoolManager {
             `Expiry scan summary: total=${summary.total}, eligible=${summary.eligible}, nearExpiry=${summary.nearExpiry}, ` +
             `enqueued=${summary.enqueued}, noCredentialFile=${summary.noCredentialFile}, unknownExpiry=${summary.unknownExpiry}, errors=${summary.errors}`);
         this._log('info', `Near-expiry accounts by provider: ${providerSummary}`);
+        if (summary.nearExpiry > 0) {
+            this._log('warn', `Detected ${summary.nearExpiry} near-expiry account(s); refresh tasks enqueued in background.`);
+        }
     }
 
     /**
@@ -514,7 +517,7 @@ export class ProviderPoolManager {
                 const startTime = Date.now();
                 force ? await serviceAdapter.forceRefreshToken() : await serviceAdapter.refreshToken() 
                 const duration = Date.now() - startTime;
-                this._log('info', `Token refresh successful for node ${providerStatus.uuid} (Duration: ${duration}ms)`);
+                this._log('debug', `Token refresh successful for node ${providerStatus.uuid} (Duration: ${duration}ms)`);
             } else {
                 throw new Error(`refreshToken method not implemented for ${providerType}`);
             }
@@ -1621,7 +1624,7 @@ export class ProviderPoolManager {
             // 更新为可用
             provider.config.lastHealthCheckTime = new Date().toISOString();
             // 标记为健康，以便立即投入使用
-            this._log('info', `Reset refresh status and marked healthy for provider ${uuid} (${providerType})`);
+            this._log('debug', `Reset refresh status and marked healthy for provider ${uuid} (${providerType})`);
 
             this._debouncedSave(providerType);
         }

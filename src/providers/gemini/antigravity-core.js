@@ -721,7 +721,7 @@ export class AntigravityApiService {
 
         if (proxyConfig) {
             oauth2Options.transporterOptions = proxyConfig;
-            logger.info('[Antigravity] Using proxy for OAuth2Client');
+            logger.debug('[Antigravity] Using proxy for OAuth2Client');
         } else {
             oauth2Options.transporterOptions = {
                 agent: httpsAgent,
@@ -767,7 +767,7 @@ export class AntigravityApiService {
 
     async initialize() {
         if (this.isInitialized) return;
-        logger.info('[Antigravity] Initializing Antigravity API Service...');
+        logger.debug('[Antigravity] Initializing Antigravity API Service...');
         // 注意：V2 读写分离架构下，初始化不再执行同步认证/刷新逻辑
         // 仅执行基础的凭证加载
         await this.loadCredentials();
@@ -775,13 +775,13 @@ export class AntigravityApiService {
         if (!this.projectId) {
             this.projectId = await this.discoverProjectAndModels();
         } else {
-            logger.info(`[Antigravity] Using provided Project ID: ${this.projectId}`);
+            logger.debug(`[Antigravity] Using provided Project ID: ${this.projectId}`);
             // 获取可用模型
             await this.fetchAvailableModels();
         }
 
         this.isInitialized = true;
-        logger.info(`[Antigravity] Initialization complete. Project ID: ${this.projectId}`);
+        logger.debug(`[Antigravity] Initialization complete. Project ID: ${this.projectId}`);
     }
 
     /**
@@ -793,7 +793,7 @@ export class AntigravityApiService {
             const data = await fs.readFile(credPath, "utf8");
             const credentials = JSON.parse(data);
             this.authClient.setCredentials(credentials);
-            logger.info('[Antigravity Auth] Credentials loaded successfully from file.');
+            logger.debug('[Antigravity Auth] Credentials loaded successfully from file.');
         } catch (error) {
             if (error.code === 'ENOENT') {
                 logger.debug(`[Antigravity Auth] Credentials file not found: ${credPath}`);
@@ -822,11 +822,11 @@ export class AntigravityApiService {
         if (needsRefresh || !this.authClient.credentials.access_token) {
             try {
                 if (this.authClient.credentials.refresh_token) {
-                    logger.info('[Antigravity Auth] Token expiring soon or force refresh requested. Refreshing token...');
+                    logger.debug('[Antigravity Auth] Token expiring soon or force refresh requested. Refreshing token...');
                     const { credentials: newCredentials } = await this.authClient.refreshAccessToken();
                     this.authClient.setCredentials(newCredentials);
                     await this._saveCredentialsToFile(credPath, newCredentials);
-                    logger.info(`[Antigravity Auth] Token refreshed and saved to ${credPath} successfully.`);
+                    logger.debug(`[Antigravity Auth] Token refreshed and saved to ${credPath} successfully.`);
 
                     // 刷新成功，重置 PoolManager 中的刷新状态并标记为健康
                     const poolManager = getProviderPoolManager();
@@ -919,7 +919,7 @@ export class AntigravityApiService {
     async _saveCredentialsToFile(filePath, credentials) {
         try {
             await fs.writeFile(filePath, JSON.stringify(credentials, null, 2));
-            logger.info(`[Antigravity Auth] Credentials saved to ${filePath}`);
+            logger.debug(`[Antigravity Auth] Credentials saved to ${filePath}`);
         } catch (error) {
             logger.error(`[Antigravity Auth] Failed to save credentials to ${filePath}: ${error.message}`);
             throw error;
@@ -928,11 +928,11 @@ export class AntigravityApiService {
 
     async discoverProjectAndModels() {
         if (this.projectId) {
-            logger.info(`[Antigravity] Using pre-configured Project ID: ${this.projectId}`);
+            logger.debug(`[Antigravity] Using pre-configured Project ID: ${this.projectId}`);
             return this.projectId;
         }
 
-        logger.info('[Antigravity] Discovering Project ID...');
+        logger.debug('[Antigravity] Discovering Project ID...');
         try {
             const initialProjectId = "";
             // Prepare client metadata
@@ -953,7 +953,7 @@ export class AntigravityApiService {
 
             // Check if we already have a project ID from the response
             if (loadResponse.cloudaicompanionProject) {
-                logger.info(`[Antigravity] Discovered existing Project ID: ${loadResponse.cloudaicompanionProject}`);
+                logger.debug(`[Antigravity] Discovered existing Project ID: ${loadResponse.cloudaicompanionProject}`);
                 // 获取可用模型
                 await this.fetchAvailableModels();
                 return loadResponse.cloudaicompanionProject;
@@ -986,15 +986,15 @@ export class AntigravityApiService {
             }
 
             const discoveredProjectId = lroResponse.response?.cloudaicompanionProject?.id || initialProjectId;
-            logger.info(`[Antigravity] Onboarded and discovered Project ID: ${discoveredProjectId}`);
+            logger.debug(`[Antigravity] Onboarded and discovered Project ID: ${discoveredProjectId}`);
             // 获取可用模型
             await this.fetchAvailableModels();
             return discoveredProjectId;
         } catch (error) {
             logger.error('[Antigravity] Failed to discover Project ID:', error.response?.data || error.message);
-            logger.info('[Antigravity] Falling back to generated Project ID as last resort...');
+            logger.debug('[Antigravity] Falling back to generated Project ID as last resort...');
             const fallbackProjectId = generateProjectID();
-            logger.info(`[Antigravity] Generated fallback Project ID: ${fallbackProjectId}`);
+            logger.debug(`[Antigravity] Generated fallback Project ID: ${fallbackProjectId}`);
             // 获取可用模型
             await this.fetchAvailableModels();
             return fallbackProjectId;
@@ -1002,7 +1002,7 @@ export class AntigravityApiService {
     }
 
     async fetchAvailableModels() {
-        logger.info('[Antigravity] Fetching available models...');
+        logger.debug('[Antigravity] Fetching available models...');
 
         for (const baseURL of this.baseURLs) {
             try {
@@ -1027,7 +1027,7 @@ export class AntigravityApiService {
                         .filter(alias => alias !== undefined && alias !== '' && alias !== null)
                         .filter(alias => ANTIGRAVITY_MODELS.includes(alias));
 
-                    logger.info(`[Antigravity] Available models: [${this.availableModels.join(', ')}]`);
+                    logger.debug(`[Antigravity] Available models: [${this.availableModels.join(', ')}]`);
                     return;
                 }
             } catch (error) {
@@ -1307,7 +1307,7 @@ export class AntigravityApiService {
     }
 
     async generateContent(model, requestBody) {
-        logger.info(`[Antigravity Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
+        logger.debug(`[Antigravity Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
 
         // 临时存储 monitorRequestId
         if (requestBody._monitorRequestId) {
@@ -1322,7 +1322,7 @@ export class AntigravityApiService {
         if (this.isExpiryDateNear()) {
             const poolManager = getProviderPoolManager();
             if (poolManager && this.uuid) {
-                logger.info(`[Antigravity] Token is near expiry, marking credential ${this.uuid} for refresh`);
+                logger.debug(`[Antigravity] Token is near expiry, marking credential ${this.uuid} for refresh`);
                 poolManager.markProviderNeedRefresh(MODEL_PROVIDER.ANTIGRAVITY, {
                     uuid: this.uuid
                 });
@@ -1383,7 +1383,7 @@ export class AntigravityApiService {
     }
 
     async * generateContentStream(model, requestBody) {
-        logger.info(`[Antigravity Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
+        logger.debug(`[Antigravity Auth Token] Time until expiry: ${formatExpiryTime(this.authClient.credentials.expiry_date)}`);
 
         // 临时存储 monitorRequestId
         if (requestBody._monitorRequestId) {
@@ -1398,7 +1398,7 @@ export class AntigravityApiService {
         if (this.isExpiryDateNear()) {
             const poolManager = getProviderPoolManager();
             if (poolManager && this.uuid) {
-                logger.info(`[Antigravity] Token is near expiry, marking credential ${this.uuid} for refresh`);
+                logger.debug(`[Antigravity] Token is near expiry, marking credential ${this.uuid} for refresh`);
                 poolManager.markProviderNeedRefresh(MODEL_PROVIDER.ANTIGRAVITY, {
                     uuid: this.uuid
                 });
@@ -1431,7 +1431,7 @@ export class AntigravityApiService {
         try {
             const nearMinutes = 20;
             const { message, isNearExpiry } = formatExpiryLog('Antigravity', this.authClient.credentials.expiry_date, nearMinutes);
-            logger.info(message);
+            logger.debug(message);
             return isNearExpiry;
         } catch (error) {
             logger.error(`[Antigravity] Error checking expiry date: ${error.message}`);

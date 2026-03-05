@@ -96,7 +96,7 @@ async function loadTokenFromFile(filePath) {
         
         // 记录加载的 token 信息
         const refreshToken = json.refreshToken || json.refresh_token || '';
-        logger.info(`[iFlow] Token loaded from: ${filePath} (refresh_token: ${refreshToken ? refreshToken.substring(0, 8) + '...' : 'EMPTY'})`);
+        logger.debug(`[iFlow] Token loaded from: ${filePath} (refresh_token: ${refreshToken ? refreshToken.substring(0, 8) + '...' : 'EMPTY'})`);
         
         return IFlowTokenStorage.fromJSON(json);
     } catch (error) {
@@ -136,7 +136,7 @@ async function saveTokenToFile(filePath, tokenStorage, uuid = null) {
 
         await fs.writeFile(absolutePath, JSON.stringify(json, null, 2), 'utf-8');
 
-        logger.info(`[iFlow] Token saved to: ${filePath} (refresh_token: ${json.refresh_token ? json.refresh_token.substring(0, 8) + '...' : 'EMPTY'})`);
+        logger.debug(`[iFlow] Token saved to: ${filePath} (refresh_token: ${json.refresh_token ? json.refresh_token.substring(0, 8) + '...' : 'EMPTY'})`);
     } catch (error) {
         throw new Error(`[iFlow] Failed to save token to file: ${error.message}`);
     }
@@ -155,7 +155,7 @@ async function refreshOAuthTokens(refreshToken, axiosInstance = null) {
         throw new Error('[iFlow] refresh_token is empty');
     }
     
-    logger.info('[iFlow] Refreshing OAuth tokens...');
+    logger.debug('[iFlow] Refreshing OAuth tokens...');
     
     // 构建请求参数
     const params = new URLSearchParams();
@@ -204,7 +204,7 @@ async function refreshOAuthTokens(refreshToken, axiosInstance = null) {
             expiryDate: expireTimestamp // 毫秒级时间戳
         };
         
-        logger.info('[iFlow] OAuth tokens refreshed successfully');
+        logger.debug('[iFlow] OAuth tokens refreshed successfully');
         
         // 获取用户信息以获取 API Key
         const userInfo = await fetchUserInfo(tokenData.accessToken, axiosInstance);
@@ -517,13 +517,13 @@ export class IFlowApiService {
     async initialize() {
         if (this.isInitialized) return;
         
-        logger.info('[iFlow] Initializing iFlow API Service...');
+        logger.debug('[iFlow] Initializing iFlow API Service...');
         // 注意：V2 读写分离架构下，初始化不再执行同步认证/刷新逻辑
         // 仅执行基础的凭证加载
         await this.loadCredentials();
         
         this.isInitialized = true;
-        logger.info('[iFlow] Initialization complete.');
+        logger.debug('[iFlow] Initialization complete.');
     }
 
     /**
@@ -537,7 +537,7 @@ export class IFlowApiService {
                 this.apiKey = this.tokenStorage.apiKey;
                 // 更新 axios 实例的 Authorization header
                 this.axiosInstance.defaults.headers['Authorization'] = `Bearer ${this.apiKey}`;
-                logger.info('[iFlow Auth] Credentials loaded successfully from file');
+                logger.debug('[iFlow Auth] Credentials loaded successfully from file');
             }
         } catch (error) {
             logger.warn(`[iFlow Auth] Failed to load credentials from file: ${error.message}`);
@@ -564,17 +564,17 @@ export class IFlowApiService {
             // 从文件加载
             if (!this.tokenStorage) {
                 this.tokenStorage = await loadTokenFromFile(this.tokenFilePath);
-                logger.info('[iFlow Auth] Loaded credentials from file');
+                logger.debug('[iFlow Auth] Loaded credentials from file');
             }
 
             if (this.tokenStorage && this.tokenStorage.apiKey) {
                 this.apiKey = this.tokenStorage.apiKey;
-                logger.info('[iFlow Auth] Authentication configured successfully from file.');
+                logger.debug('[iFlow Auth] Authentication configured successfully from file.');
 
                 if (forceRefresh) {
-                    logger.info('[iFlow Auth] Forcing token refresh...');
+                    logger.debug('[iFlow Auth] Forcing token refresh...');
                     await this._refreshOAuthTokens();
-                    logger.info('[iFlow Auth] Token refreshed and saved successfully.');
+                    logger.debug('[iFlow Auth] Token refreshed and saved successfully.');
 
                     // 刷新成功，重置 PoolManager 中的刷新状态并标记为健康
                     const poolManager = getProviderPoolManager();
@@ -743,7 +743,7 @@ export class IFlowApiService {
             }
             
             const { message, isNearExpiry } = formatExpiryLog('iFlow', expireTime, cronNearMinutes);
-            logger.info(message);
+            logger.debug(message);
             
             return isNearExpiry;
         } catch (error) {

@@ -36,13 +36,13 @@ export class CodexApiService {
      */
     async initialize() {
         if (this.isInitialized) return;
-        logger.info('[Codex] Initializing Codex API Service...');
+        logger.debug('[Codex] Initializing Codex API Service...');
         // 注意：V2 读写分离架构下，初始化不再执行同步认证/刷新逻辑
         // 仅执行基础的凭证加载
         await this.loadCredentials();
 
         this.isInitialized = true;
-        logger.info(`[Codex] Initialization complete. Account: ${this.email || 'unknown'}`);
+        logger.debug(`[Codex] Initialization complete. Account: ${this.email || 'unknown'}`);
     }
 
     /**
@@ -93,12 +93,12 @@ export class CodexApiService {
 
             // 检查 token 是否需要刷新
             if (this.isExpiryDateNear()) {
-                logger.info('[Codex] Token expiring soon, refreshing...');
+                logger.debug('[Codex] Token expiring soon, refreshing...');
                 await this.refreshAccessToken();
             }
 
             this.isInitialized = true;
-            logger.info(`[Codex] Initialized with account: ${this.email}`);
+            logger.debug(`[Codex] Initialized with account: ${this.email}`);
         } catch (error) {
             logger.warn(`[Codex Auth] Failed to load credentials: ${error.message}`);
         }
@@ -123,7 +123,7 @@ export class CodexApiService {
             if (!this.refreshToken) {
                 throw new Error('Codex credentials not found. Please authenticate first using OAuth.');
             }
-            logger.info('[Codex] Token expiring soon or refresh requested, refreshing...');
+            logger.debug('[Codex] Token expiring soon or refresh requested, refreshing...');
             await this.refreshAccessToken();
         }
     }
@@ -380,7 +380,7 @@ export class CodexApiService {
             if (poolManager && this.uuid) {
                 poolManager.resetProviderRefreshStatus(MODEL_PROVIDER.CODEX_API, this.uuid);
             }
-            logger.info('[Codex] Token refreshed successfully');
+            logger.debug('[Codex] Token refreshed successfully');
         } catch (error) {
             logger.error('[Codex] Failed to refresh token:', error.message);
             throw new Error('Failed to refresh Codex token. Please re-authenticate.');
@@ -400,7 +400,7 @@ export class CodexApiService {
         }
         const nearMinutes = 20;
         const { message, isNearExpiry } = formatExpiryLog('Codex', expiry, nearMinutes);
-        logger.info(message);
+        logger.debug(message);
         return isNearExpiry;
     }
 
@@ -694,4 +694,3 @@ export class CodexApiService {
         }
     }
 }
-

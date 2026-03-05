@@ -189,13 +189,13 @@ export class QwenApiService {
         this.oauthDeviceCodeEndpoint = `${oauthBaseUrl}/api/v1/oauth2/device/code`;
         this.oauthTokenEndpoint = `${oauthBaseUrl}/api/v1/oauth2/token`;
 
-        logger.info(`[Qwen] System proxy ${this.useSystemProxy ? 'enabled' : 'disabled'}`);
+        logger.debug(`[Qwen] System proxy ${this.useSystemProxy ? 'enabled' : 'disabled'}`);
         this.qwenClient = new QwenOAuth2Client(config, this.useSystemProxy);
     }
 
     async initialize() {
         if (this.isInitialized) return;
-        logger.info('[Qwen] Initializing Qwen API Service...');
+        logger.debug('[Qwen] Initializing Qwen API Service...');
         // 注意：V2 读写分离架构下，初始化不再执行同步认证/刷新逻辑
         // 仅执行基础的凭证加载
         await this.loadCredentials();
@@ -235,7 +235,7 @@ export class QwenApiService {
         this.currentAxiosInstance = axios.create(axiosConfig);
 
         this.isInitialized = true;
-        logger.info('[Qwen] Initialization complete.');
+        logger.debug('[Qwen] Initialization complete.');
     }
 
     /**
@@ -247,7 +247,7 @@ export class QwenApiService {
             const creds = await fs.readFile(keyFile, 'utf-8');
             const credentials = JSON.parse(creds);
             this.qwenClient.setCredentials(credentials);
-            logger.info('[Qwen Auth] Credentials loaded successfully from file.');
+            logger.debug('[Qwen Auth] Credentials loaded successfully from file.');
         } catch (error) {
             if (error.code === 'ENOENT') {
                 logger.debug('[Qwen Auth] No cached credentials found.');
@@ -298,7 +298,7 @@ export class QwenApiService {
 
             // If cached credentials are present and still valid, use them directly.
             if (await this._loadCachedQwenCredentials(this.qwenClient)) {
-                logger.info('[Qwen] Using cached OAuth credentials.');
+                logger.debug('[Qwen] Using cached OAuth credentials.');
                 return;
             }
 
@@ -732,7 +732,7 @@ export class QwenApiService {
             }
             const nearMinutes = 20;
             const { message, isNearExpiry } = formatExpiryLog('Qwen', credentials.expiry_date, nearMinutes);
-            logger.info(message);
+            logger.debug(message);
             return isNearExpiry;
         } catch (error) {
             logger.error(`[Qwen] Error checking expiry date: ${error.message}`);
@@ -1103,4 +1103,3 @@ class QwenOAuth2Client {
         }
     }
 }
-
