@@ -1,7 +1,7 @@
 // 提供商管理功能模块
 
 import { providerStats, updateProviderStats } from './constants.js';
-import { showToast, formatUptime, getProviderConfigs } from './utils.js';
+import { showToast, getProviderConfigs } from './utils.js';
 import { fileUploadHandler } from './file-upload.js';
 import { t, getCurrentLanguage } from './i18n.js';
 import { renderRoutingExamples } from './routing-examples.js';
@@ -12,9 +12,8 @@ import { updateConfigProviderConfigs } from './config-manager.js';
 import { loadConfigList, updateProviderFilterOptions } from './upload-config-manager.js';
 import { setServiceMode } from './event-handlers.js';
 
-// 保存初始服务器时间和运行时间
+// 保存初始服务器时间
 let initialServerTime = null;
-let initialUptime = null;
 let initialLoadTime = null;
 let isStaticProviderConfigsUpdated = false;
 let cachedSupportedProviders = null;
@@ -31,7 +30,6 @@ async function loadSystemInfo() {
         const serverTimeEl = document.getElementById('serverTime');
         const memoryUsageEl = document.getElementById('memoryUsage');
         const cpuUsageEl = document.getElementById('cpuUsage');
-        const uptimeEl = document.getElementById('uptime');
 
         if (appVersionEl) appVersionEl.textContent = data.appVersion ? `v${data.appVersion}` : '--';
         
@@ -45,15 +43,13 @@ async function loadSystemInfo() {
         if (cpuUsageEl) cpuUsageEl.textContent = data.cpuUsage || '--';
         
         // 保存初始时间用于本地计算
-        if (data.serverTime && data.uptime !== undefined) {
+        if (data.serverTime) {
             initialServerTime = new Date(data.serverTime);
-            initialUptime = data.uptime;
             initialLoadTime = Date.now();
         }
         
         // 初始显示
         if (serverTimeEl) serverTimeEl.textContent = data.serverTime || '--';
-        if (uptimeEl) uptimeEl.textContent = data.uptime ? formatUptime(data.uptime) : '--';
 
         // 加载服务模式信息
         await loadServiceModeInfo();
@@ -149,15 +145,14 @@ function updateRestartButton(mode) {
 }
 
 /**
- * 更新服务器时间和运行时间显示（本地计算）
+ * 更新服务器时间显示（本地计算）
  */
 function updateTimeDisplay() {
-    if (!initialServerTime || initialUptime === null || !initialLoadTime) {
+    if (!initialServerTime || !initialLoadTime) {
         return;
     }
 
     const serverTimeEl = document.getElementById('serverTime');
-    const uptimeEl = document.getElementById('uptime');
 
     // 计算经过的秒数
     const elapsedSeconds = Math.floor((Date.now() - initialLoadTime) / 1000);
@@ -176,11 +171,6 @@ function updateTimeDisplay() {
         });
     }
 
-    // 更新运行时间
-    if (uptimeEl) {
-        const currentUptime = initialUptime + elapsedSeconds;
-        uptimeEl.textContent = formatUptime(currentUptime);
-    }
 }
 
 /**

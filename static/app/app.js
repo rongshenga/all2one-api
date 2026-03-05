@@ -74,10 +74,6 @@ import {
 } from './usage-manager.js';
 
 import {
-    initImageZoom
-} from './image-zoom.js';
-
-import {
     initPluginManager,
     togglePlugin
 } from './plugin-manager.js';
@@ -120,7 +116,6 @@ function initApp() {
     initRoutingExamples(); // 初始化路径路由示例功能
     initUploadConfigManager(); // 初始化配置管理功能
     initUsageManager(); // 初始化用量管理功能
-    initImageZoom(); // 初始化图片放大功能
     initPluginManager(); // 初始化插件管理功能
     initTutorialManager(); // 初始化教程管理功能
     initMobileMenu(); // 初始化移动端菜单
@@ -129,7 +124,7 @@ function initApp() {
     // 显示欢迎消息
     showToast(t('common.success'), t('common.welcome'), 'success');
     
-    // 每5秒更新服务器时间和运行时间显示
+    // 每5秒更新服务器时间显示
     setInterval(() => {
         updateTimeDisplay();
     }, 5000);

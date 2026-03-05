@@ -1,6 +1,6 @@
 // 配置管理模块
 
-import { showToast, formatUptime } from './utils.js';
+import { showToast } from './utils.js';
 import { handleProviderChange, handleGeminiCredsTypeChange, handleKiroCredsTypeChange } from './event-handlers.js';
 import { loadProviders } from './provider-manager.js';
 import { t } from './i18n.js';

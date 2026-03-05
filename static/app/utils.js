@@ -1,5 +1,5 @@
 // 工具函数
-import { t, getCurrentLanguage } from './i18n.js';
+import { t } from './i18n.js';
 import { apiClient } from './auth.js';
 
 /**
@@ -82,23 +82,6 @@ function getProviderConfigs(supportedProviders = []) {
             visible: supportedProviders.includes('openaiResponses-custom') 
         },
     ];
-}
-
-/**
- * 格式化运行时间
- * @param {number} seconds - 秒数
- * @returns {string} 格式化的时间字符串
- */
-function formatUptime(seconds) {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-    
-    if (getCurrentLanguage() === 'en-US') {
-        return `${days}d ${hours}h ${minutes}m ${secs}s`;
-    }
-    return `${days}天 ${hours}小时 ${minutes}分 ${secs}秒`;
 }
 
 /**
@@ -455,7 +438,6 @@ async function apiRequest(url, options = {}) {
 
 // 导出所有工具函数
 export {
-    formatUptime,
     escapeHtml,
     showToast,
     getFieldLabel,
