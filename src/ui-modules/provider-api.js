@@ -6,25 +6,57 @@ import { generateUUID, createProviderConfig, formatSystemPath, detectProviderFro
 import { broadcastEvent } from './event-broadcast.js';
 import { getRegisteredProviders } from '../providers/adapter.js';
 
-/**
- * 获取提供商池摘要
- */
-export async function handleGetProviders(req, res, currentConfig, providerPoolManager) {
+function loadProviderPools(currentConfig, providerPoolManager) {
     let providerPools = {};
     const filePath = currentConfig.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+
     try {
         if (providerPoolManager && providerPoolManager.providerPools) {
             providerPools = providerPoolManager.providerPools;
         } else if (filePath && existsSync(filePath)) {
-            const poolsData = JSON.parse(readFileSync(filePath, 'utf-8'));
-            providerPools = poolsData;
+            providerPools = JSON.parse(readFileSync(filePath, 'utf-8'));
         }
     } catch (error) {
         logger.warn('[UI API] Failed to load provider pools:', error.message);
     }
 
+    return providerPools;
+}
+
+function buildProviderSummary(providers = []) {
+    const providerList = Array.isArray(providers) ? providers : [];
+
+    return {
+        totalCount: providerList.length,
+        healthyCount: providerList.filter(provider => provider.isHealthy && !provider.isDisabled).length,
+        usageCount: providerList.reduce((sum, provider) => sum + (provider.usageCount || 0), 0),
+        errorCount: providerList.reduce((sum, provider) => sum + (provider.errorCount || 0), 0)
+    };
+}
+
+/**
+ * 获取提供商池完整数据
+ */
+export async function handleGetProviders(req, res, currentConfig, providerPoolManager) {
+    const providerPools = loadProviderPools(currentConfig, providerPoolManager);
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(providerPools));
+    return true;
+}
+
+/**
+ * 获取提供商池摘要
+ */
+export async function handleGetProvidersSummary(req, res, currentConfig, providerPoolManager) {
+    const providerPools = loadProviderPools(currentConfig, providerPoolManager);
+    const providerSummaries = Object.entries(providerPools).reduce((summaries, [providerType, providers]) => {
+        summaries[providerType] = buildProviderSummary(providers);
+        return summaries;
+    }, {});
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(providerSummaries));
     return true;
 }
 
@@ -42,26 +74,15 @@ export async function handleGetSupportedProviders(req, res) {
  * 获取特定提供商类型的详细信息
  */
 export async function handleGetProviderType(req, res, currentConfig, providerPoolManager, providerType) {
-    let providerPools = {};
-    const filePath = currentConfig.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
-    try {
-        if (providerPoolManager && providerPoolManager.providerPools) {
-            providerPools = providerPoolManager.providerPools;
-        } else if (filePath && existsSync(filePath)) {
-            const poolsData = JSON.parse(readFileSync(filePath, 'utf-8'));
-            providerPools = poolsData;
-        }
-    } catch (error) {
-        logger.warn('[UI API] Failed to load provider pools:', error.message);
-    }
+    const providerPools = loadProviderPools(currentConfig, providerPoolManager);
 
     const providers = providerPools[providerType] || [];
+    const summary = buildProviderSummary(providers);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
         providerType,
         providers,
-        totalCount: providers.length,
-        healthyCount: providers.filter(p => p.isHealthy).length
+        ...summary
     }));
     return true;
 }

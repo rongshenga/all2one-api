@@ -3,6 +3,7 @@ import logger from '../utils/logger.js';
 import { serviceInstances, getServiceAdapter } from '../providers/adapter.js';
 import { formatKiroUsage, formatGeminiUsage, formatAntigravityUsage, formatCodexUsage, formatGrokUsage } from '../services/usage-service.js';
 import { readUsageCache, writeUsageCache, readProviderUsageCache, updateProviderUsageCache } from './usage-cache.js';
+import { broadcastEvent } from './event-broadcast.js';
 import path from 'path';
 import { randomUUID } from 'crypto';
 
@@ -228,6 +229,26 @@ function createUsageRefreshTask(input = {}) {
     usageRefreshTasks.set(task.id, task);
     pruneUsageRefreshTasks();
     return task;
+}
+
+/**
+ * 广播用量刷新任务状态
+ * @param {Object} task - 刷新任务
+ */
+function broadcastUsageRefreshTaskUpdate(task) {
+    if (!task || (task.status !== 'completed' && task.status !== 'failed')) {
+        return;
+    }
+
+    broadcastEvent('usage_refresh', {
+        taskId: task.id,
+        type: task.type,
+        providerType: task.providerType,
+        status: task.status,
+        finishedAt: task.finishedAt,
+        error: task.error,
+        result: task.result
+    });
 }
 
 /**
@@ -685,11 +706,13 @@ function startProviderUsageRefreshTask(currentConfig, providerPoolManager, provi
                 successCount: usageResults.successCount || 0,
                 errorCount: usageResults.errorCount || 0
             };
+            broadcastUsageRefreshTaskUpdate(task);
         } catch (error) {
             task.status = 'failed';
             task.finishedAt = new Date().toISOString();
             task.error = error.message || String(error);
             logger.error(`[Usage API] Provider refresh task failed (${providerType}):`, error);
+            broadcastUsageRefreshTaskUpdate(task);
         } finally {
             pruneUsageRefreshTasks();
         }
@@ -810,11 +833,13 @@ function startAllProvidersUsageRefreshTask(currentConfig, providerPoolManager, o
                 successCount: completedSuccessCount,
                 errorCount: completedErrorCount
             };
+            broadcastUsageRefreshTaskUpdate(task);
         } catch (error) {
             task.status = 'failed';
             task.finishedAt = new Date().toISOString();
             task.error = error.message || String(error);
             logger.error('[Usage API] Full refresh task failed:', error);
+            broadcastUsageRefreshTaskUpdate(task);
         } finally {
             pruneUsageRefreshTasks();
         }

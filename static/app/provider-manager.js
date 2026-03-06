@@ -265,7 +265,7 @@ async function loadProviders() {
             }
         }, PROVIDERS_LIST_LOADING_DELAY_MS);
 
-        const providers = await window.apiClient.get('/providers');
+        const providers = await window.apiClient.get('/providers/summary');
 
         // 动态更新其他模块的提供商信息，只需更新一次
         if (!isStaticProviderConfigsUpdated) {
@@ -308,6 +308,38 @@ async function loadProviders() {
             }
         }
     }
+}
+
+/**
+ * 归一化提供商摘要数据
+ * @param {Object|Array|null} providerData - 提供商摘要或旧版账号数组
+ * @returns {{totalCount: number, healthyCount: number, usageCount: number, errorCount: number}}
+ */
+function normalizeProviderSummary(providerData) {
+    if (Array.isArray(providerData)) {
+        return {
+            totalCount: providerData.length,
+            healthyCount: providerData.filter(account => account.isHealthy && !account.isDisabled).length,
+            usageCount: providerData.reduce((sum, account) => sum + (account.usageCount || 0), 0),
+            errorCount: providerData.reduce((sum, account) => sum + (account.errorCount || 0), 0)
+        };
+    }
+
+    if (providerData && typeof providerData === 'object') {
+        return {
+            totalCount: Number(providerData.totalCount) || 0,
+            healthyCount: Number(providerData.healthyCount) || 0,
+            usageCount: Number(providerData.usageCount) || 0,
+            errorCount: Number(providerData.errorCount) || 0
+        };
+    }
+
+    return {
+        totalCount: 0,
+        healthyCount: 0,
+        usageCount: 0,
+        errorCount: 0
+    };
 }
 
 /**
@@ -366,16 +398,14 @@ function renderProviders(providers, supportedProviders = []) {
             return;
         }
 
-        const accounts = hasProviders ? providers[providerType] || [] : [];
+        const providerData = hasProviders ? providers[providerType] : null;
+        const summary = normalizeProviderSummary(providerData);
         const providerDiv = document.createElement('div');
         providerDiv.className = 'provider-item';
         providerDiv.dataset.providerType = providerType;
         providerDiv.style.cursor = 'pointer';
 
-        const healthyCount = accounts.filter(acc => acc.isHealthy && !acc.isDisabled).length;
-        const totalCount = accounts.length;
-        const usageCount = accounts.reduce((sum, acc) => sum + (acc.usageCount || 0), 0);
-        const errorCount = accounts.reduce((sum, acc) => sum + (acc.errorCount || 0), 0);
+        const { healthyCount, totalCount, usageCount, errorCount } = summary;
         
         totalAccounts += totalCount;
         totalHealthy += healthyCount;

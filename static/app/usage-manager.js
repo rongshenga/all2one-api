@@ -28,6 +28,15 @@ function sleep(ms) {
 }
 
 /**
+ * 判断当前是否位于用量页面
+ * @returns {boolean} 是否位于用量页面
+ */
+function isUsageSectionActive() {
+    const usageSection = document.getElementById('usage');
+    return Boolean(usageSection && usageSection.classList.contains('active'));
+}
+
+/**
  * 设置用量加载文案
  * @param {HTMLElement|null} loadingEl - loading 容器
  * @param {string} text - 文案
@@ -293,7 +302,9 @@ export async function refreshUsage() {
     try {
         await runUsageRefreshTask('/api/usage?refresh=true&async=true', loadingEl, t('usage.allProviders'));
         await loadUsage();
-        showToast(t('common.success'), t('usage.taskCompleted'), 'success');
+        if (isUsageSectionActive()) {
+            showToast(t('common.success'), t('usage.taskCompleted'), 'success');
+        }
     } catch (error) {
         console.error('获取用量数据失败:', error);
         
@@ -305,7 +316,9 @@ export async function refreshUsage() {
             }
         }
         
-        showToast(t('common.error'), t('usage.taskFailed') + ': ' + error.message, 'error');
+        if (isUsageSectionActive()) {
+            showToast(t('common.error'), t('usage.taskFailed') + ': ' + error.message, 'error');
+        }
     } finally {
         if (loadingEl) {
             loadingEl.style.display = 'none';
@@ -416,10 +429,14 @@ export async function refreshProviderUsage(providerType) {
         await runUsageRefreshTask(`/api/usage/${providerType}?refresh=true&async=true`, loadingEl, providerName);
         await loadUsage();
 
-        showToast(t('common.success'), t('usage.taskCompleted'), 'success');
+        if (isUsageSectionActive()) {
+            showToast(t('common.success'), t('usage.taskCompleted'), 'success');
+        }
     } catch (error) {
         console.error(`刷新提供商 ${providerType} 失败:`, error);
-        showToast(t('common.error'), t('usage.taskFailed') + ': ' + error.message, 'error');
+        if (isUsageSectionActive()) {
+            showToast(t('common.error'), t('usage.taskFailed') + ': ' + error.message, 'error');
+        }
     } finally {
         refreshingProviders.delete(providerType);
         if (loadingEl) {

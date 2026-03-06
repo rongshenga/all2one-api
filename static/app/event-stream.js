@@ -2,6 +2,7 @@
 
 import { eventSource, setEventSource, elements, addLog, autoScroll } from './constants.js';
 import { t } from './i18n.js';
+import { escapeHtml, getProviderConfigs, showToast } from './utils.js';
 
 /**
  * Server-Sent Events初始化
@@ -49,6 +50,11 @@ function initEventStream() {
     newEventSource.addEventListener('config_update', (event) => {
         const data = JSON.parse(event.data);
         handleConfigUpdate(data);
+    });
+
+    newEventSource.addEventListener('usage_refresh', (event) => {
+        const data = JSON.parse(event.data);
+        handleUsageRefresh(data);
     });
 }
 
@@ -112,6 +118,60 @@ function updateProviderStatus(data) {
 }
 
 /**
+ * 判断当前是否位于用量页面
+ * @returns {boolean} 是否位于用量页面
+ */
+function isUsageSectionActive() {
+    const usageSection = document.getElementById('usage');
+    return Boolean(usageSection && usageSection.classList.contains('active'));
+}
+
+/**
+ * 获取用量刷新通知的提供商显示名称
+ * @param {string|null} providerType - 提供商类型
+ * @returns {string} 提供商显示名称
+ */
+function getUsageRefreshProviderName(providerType) {
+    if (!providerType) {
+        return t('usage.allProviders');
+    }
+
+    const providerConfigs = getProviderConfigs([
+        'claude-kiro-oauth',
+        'gemini-cli-oauth',
+        'gemini-antigravity',
+        'openai-codex-oauth',
+        'grok-custom'
+    ]);
+    const matchedProvider = providerConfigs.find(item => item.id === providerType);
+    return matchedProvider?.name || providerType;
+}
+
+/**
+ * 处理用量刷新任务完成事件
+ * @param {Object} data - 刷新任务数据
+ */
+function handleUsageRefresh(data) {
+    window.dispatchEvent(new CustomEvent('usage_refresh_event', { detail: data }));
+
+    if (!data || isUsageSectionActive()) {
+        return;
+    }
+
+    const providerName = getUsageRefreshProviderName(data.providerType);
+
+    if (data.status === 'completed') {
+        showToast(t('common.success'), `${providerName} ${t('usage.taskCompleted')}`, 'success');
+        return;
+    }
+
+    if (data.status === 'failed') {
+        const errorMessage = data.error ? `${providerName} ${t('usage.taskFailed')}: ${data.error}` : `${providerName} ${t('usage.taskFailed')}`;
+        showToast(t('common.error'), errorMessage, 'error');
+    }
+}
+
+/**
  * 处理提供商更新事件
  * @param {Object} data - 更新数据
  */
@@ -131,9 +191,6 @@ function handleProviderUpdate(data) {
         }
     }
 }
-
-// 导入工具函数
-import { escapeHtml, showToast } from './utils.js';
 
 // 需要从其他模块导入的函数
 let loadProviders;
