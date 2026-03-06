@@ -185,7 +185,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div style="position: absolute; top: 20px; right: 20px;" id="langSwitcherContainer"></div>
     <div class="login-container">
         <div class="logo">
             <img src="/favicon.ico" alt="Logo" onerror="this.style.display='none'">
@@ -214,52 +213,16 @@
         </form>
 
         <div class="footer">
-            <p>&copy; 2025 AIClient2API. All rights reserved.</p>
+            <p>&copy; 2025 AIClient2API。保留所有权利。</p>
         </div>
     </div>
 
     <script type="module">
-        import { initI18n, t, setLanguage } from './app/i18n.js';
-        import { initLanguageSwitcher } from './app/language-switcher.js';
+        import { initI18n, t } from './app/i18n.js';
 
         // 初始化多语言
         initI18n();
         
-        // 初始化语言切换器
-        const langContainer = document.getElementById('langSwitcherContainer');
-        if (langContainer) {
-            import('./app/language-switcher.js').then(module => {
-                const switcher = module.createLanguageSwitcher();
-                langContainer.appendChild(switcher);
-                
-                // 绑定事件逻辑（由于是动态创建，复用逻辑）
-                const languageBtn = switcher.querySelector('#languageBtn');
-                const languageDropdown = switcher.querySelector('#languageDropdown');
-                const languageOptions = switcher.querySelectorAll('.language-option');
-                
-                languageBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    languageDropdown.classList.toggle('show');
-                });
-                
-                languageOptions.forEach(option => {
-                    option.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const lang = option.getAttribute('data-lang');
-                        setLanguage(lang);
-                        switcher.querySelector('.current-lang').textContent = lang === 'zh-CN' ? '中文' : 'EN';
-                        languageOptions.forEach(opt => opt.classList.remove('active'));
-                        option.classList.add('active');
-                        languageDropdown.classList.remove('show');
-                    });
-                });
-                
-                document.addEventListener('click', () => {
-                    languageDropdown.classList.remove('show');
-                });
-            });
-        }
-
         const loginForm = document.getElementById('loginForm');
         const passwordInput = document.getElementById('password');
         const errorMessage = document.getElementById('errorMessage');

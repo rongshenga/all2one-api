@@ -81,16 +81,11 @@
 }
 ```
 
-#### 3.5.3 多语言文案 ([`static/app/i18n.js`](static/app/i18n.js))
-在中文和英文的翻译对象中添加筛选器、配置项、认证步骤等相关文案：
+#### 3.5.3 中文文案 ([`static/app/i18n.js`](static/app/i18n.js))
+在 `zh-CN` 翻译对象中添加筛选器、配置项、认证步骤等相关文案：
 ```javascript
-// 中文版本 (zh-CN)
 'upload.providerFilter.newProvider': 'New Provider OAuth',
 'config.newProvider.apiKey': 'API 密钥',
-
-// 英文版本 (en-US)
-'upload.providerFilter.newProvider': 'New Provider OAuth',
-'config.newProvider.apiKey': 'API Key',
 ```
 
 ### 3.6 配置管理界面 ([`static/components/section-config.html`](static/components/section-config.html))

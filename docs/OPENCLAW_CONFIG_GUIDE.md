@@ -1,25 +1,25 @@
-# OpenClaw Configuration Guide
+# OpenClaw 配置指南
 
-Quick configuration guide for using AIClient-2-API with OpenClaw.
-
----
-
-## Prerequisites
-
-1. Start AIClient-2-API service
-2. Configure at least one provider in Web UI (`http://localhost:3000`)
-3. Note the API Key from configuration file
-4. Install OpenClaw
-   - Docker version: [justlikemaki/openclaw-docker-cn-im](https://hub.docker.com/r/justlikemaki/openclaw-docker-cn-im)
-   - Or use other installation methods
+在 OpenClaw 中使用 AIClient-2-API 的快速配置指南。
 
 ---
 
-## Configuration Methods
+## 前置准备
 
-### Method 1: OpenAI Protocol (Recommended)
+1. 启动 AIClient-2-API 服务
+2. 在 Web UI (`http://localhost:3000`) 配置至少一个提供商
+3. 记录配置文件中的 API Key
+4. 安装 OpenClaw
+   - Docker 版本：[justlikemaki/openclaw-docker-cn-im](https://hub.docker.com/r/justlikemaki/openclaw-docker-cn-im)
+   - 或使用其他安装方式
 
-**Use Case**: For Gemini models
+---
+
+## 配置方式
+
+### 方式一：OpenAI 协议（推荐）
+
+**适用场景**：使用 Gemini 模型
 
 ```json5
 {
@@ -58,9 +58,9 @@ Quick configuration guide for using AIClient-2-API with OpenClaw.
 }
 ```
 
-### Method 2: Claude Protocol
+### 方式二：Claude 协议
 
-**Use Case**: For Claude models with features like Prompt Caching
+**适用场景**：使用 Claude 模型，需要 Prompt Caching 等特性
 
 ```json5
 {
@@ -101,15 +101,15 @@ Quick configuration guide for using AIClient-2-API with OpenClaw.
 
 ---
 
-## Specify Provider (Optional)
+## 指定提供商（可选）
 
-Specify a specific provider via routing parameters:
+通过路由参数指定特定提供商：
 
 ```json5
 {
   models: {
     providers: {
-      // Kiro Claude (OpenAI Protocol)
+      // Kiro 提供的 Claude (OpenAI 协议)
       "aiclient2api-kiro": {
         baseUrl: "http://localhost:3000/claude-kiro-oauth/v1",
         apiKey: "${AICLIENT2API_KEY}",
@@ -117,7 +117,7 @@ Specify a specific provider via routing parameters:
         models: [...]
       },
       
-      // Kiro Claude (Claude Protocol)
+      // Kiro 提供的 Claude (Claude 协议)
       "aiclient2api-kiro-claude": {
         baseUrl: "http://localhost:3000/claude-kiro-oauth",
         apiKey: "${AICLIENT2API_KEY}",
@@ -125,7 +125,7 @@ Specify a specific provider via routing parameters:
         models: [...]
       },
       
-      // Gemini CLI (OpenAI Protocol)
+      // Gemini CLI (OpenAI 协议)
       "aiclient2api-gemini": {
         baseUrl: "http://localhost:3000/gemini-cli-oauth/v1",
         apiKey: "${AICLIENT2API_KEY}",
@@ -133,7 +133,7 @@ Specify a specific provider via routing parameters:
         models: [...]
       },
       
-      // Antigravity (OpenAI Protocol)
+      // Antigravity (OpenAI 协议)
       "aiclient2api-antigravity": {
         baseUrl: "http://localhost:3000/gemini-antigravity/v1",
         apiKey: "${AICLIENT2API_KEY}",
@@ -147,7 +147,7 @@ Specify a specific provider via routing parameters:
 
 ---
 
-## Configure Fallback
+## 配置 Fallback
 
 ```json5
 {
@@ -166,48 +166,48 @@ Specify a specific provider via routing parameters:
 
 ---
 
-## Common Commands
+## 常用命令
 
 ```bash
-# List all models
+# 列出所有模型
 openclaw models list
 
-# Switch model
+# 切换模型
 openclaw models set aiclient2api/claude-sonnet-4-5
 
-# Chat with specific model
-openclaw chat --model aiclient2api/gemini-3-flash-preview "your question"
+# 使用指定模型对话
+openclaw chat --model aiclient2api/gemini-3-flash-preview "你的问题"
 ```
 
 ---
 
-## Protocol Comparison
+## 协议对比
 
-| Feature | OpenAI Protocol | Claude Protocol |
-|---------|----------------|-----------------|
+| 特性 | OpenAI 协议 | Claude 协议 |
+|------|------------|------------|
 | Base URL | `http://localhost:3000/v1` | `http://localhost:3000` |
-| API Type | `openai-completions` | `anthropic-messages` |
-| Supported Models | All models | Claude only |
-| Special Features | - | Prompt Caching, Extended Thinking |
+| API 类型 | `openai-completions` | `anthropic-messages` |
+| 支持模型 | 所有模型 | 仅 Claude |
+| 特殊特性 | - | Prompt Caching、Extended Thinking |
 
 ---
 
-## FAQ
+## 常见问题
 
-**Q: Connection failed?**
-- Confirm AIClient-2-API service is running
-- Check if Base URL is correct (OpenAI protocol needs `/v1` suffix)
-- Try using `127.0.0.1` instead of `localhost`
+**Q: 连接失败？**
+- 确认 AIClient-2-API 服务运行中
+- 检查 Base URL 是否正确（OpenAI 协议需要 `/v1` 后缀）
+- 尝试使用 `127.0.0.1` 替代 `localhost`
 
-**Q: 401 error?**
-- Check if API Key is correctly configured
-- Confirm environment variable `AICLIENT2API_KEY` is set
+**Q: 401 错误？**
+- 检查 API Key 是否正确配置
+- 确认环境变量 `AICLIENT2API_KEY` 已设置
 
-**Q: Model unavailable?**
-- Confirm provider is configured in AIClient-2-API Web UI
-- Run `openclaw gateway restart` to restart gateway
-- Run `openclaw models list` to verify model list
+**Q: 模型不可用？**
+- 在 AIClient-2-API Web UI 确认已配置对应提供商
+- 运行 `openclaw gateway restart` 重启网关
+- 运行 `openclaw models list` 验证模型列表
 
 ---
 
-For more information, see [AIClient-2-API Documentation](../README.md)
+更多信息请参考 [AIClient-2-API 文档](../README.md)

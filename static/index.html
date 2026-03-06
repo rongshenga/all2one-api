@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <meta name="theme-color" content="#059669">
-    <meta name="description" content="AIClient2API Management Console - Unified management of AI service providers" data-i18n="header.description">
+    <meta name="description" content="AIClient2API 管理控制台 - 统一管理 AI 服务提供商" data-i18n="header.description">
     <title data-i18n="header.title">AIClient2API - 管理控制台</title>
     <link rel="stylesheet" href="app/base.css">
     <link rel="stylesheet" href="app/mobile.css">
@@ -33,7 +33,6 @@
 
     <!-- Scripts -->
     <script type="module" src="app/i18n.js"></script>
-    <script type="module" src="app/language-switcher.js"></script>
     <script type="module" src="app/theme-switcher.js"></script>
     <script type="module" src="app/auth.js"></script>
     <script type="module" src="app/models-manager.js"></script>
@@ -41,8 +40,7 @@
         // 导入组件加载器
         import { initializeComponents } from './app/component-loader.js';
         // 导入多语言、主题切换和认证函数
-        import { initI18n, t, setLanguage, getCurrentLanguage } from './app/i18n.js';
-        import { initLanguageSwitcher } from './app/language-switcher.js';
+        import { initI18n, t } from './app/i18n.js';
         import { initThemeSwitcher, setTheme, getCurrentTheme } from './app/theme-switcher.js';
         import { initAuth, logout } from './app/auth.js';
         
@@ -68,12 +66,6 @@
                 
                 // 组件加载完成后初始化多语言
                 initI18n();
-                
-                // 初始化语言切换器
-                initLanguageSwitcher();
-                
-                // 重新应用当前语言（因为组件是动态加载的）
-                setLanguage(getCurrentLanguage());
                 
                 // 显示登出按钮（如果配置了密码保护）
                 const logoutBtn = document.getElementById('logoutBtn');

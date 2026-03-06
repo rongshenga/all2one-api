@@ -3311,7 +3311,7 @@ function getAuthFilePath(provider) {
         'claude-kiro-oauth': '~/.aws/sso/cache/kiro-auth-token.json',
         'openai-iflow': '~/.iflow/oauth_creds.json'
     };
-    return authFilePaths[provider] || (getCurrentLanguage() === 'en-US' ? 'Unknown Path' : '未知路径');
+    return authFilePaths[provider] || '未知路径';
 }
 
 /**
