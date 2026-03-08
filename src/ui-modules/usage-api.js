@@ -25,7 +25,9 @@ const DEFAULT_USAGE_CACHE_READ_TIMEOUT_MS = 5000;
 const DEFAULT_PROVIDER_USAGE_CACHE_READ_TIMEOUT_MS = 5000;
 const DEFAULT_PROVIDER_USAGE_INSTANCE_TIMEOUT_MS = 30000;
 const DEFAULT_USAGE_SYNC_QUERY_MAX_PROVIDER_COUNT = 500;
+const DEFAULT_USAGE_TASK_PERSIST_INTERVAL_MS = 1000;
 const usageRefreshTasks = new Map();
+const usageRefreshTaskPersistState = new Map();
 
 function normalizeUiDebugFlag(value) {
     if (typeof value !== 'string') {
@@ -178,17 +180,129 @@ function getUsageTaskStorage() {
     return runtimeStorage;
 }
 
-async function persistUsageRefreshTask(task) {
+function isTerminalUsageRefreshTask(task) {
+    return task?.status === 'completed' || task?.status === 'failed';
+}
+
+function clearUsageRefreshTaskPersistState(taskId) {
+    const state = usageRefreshTaskPersistState.get(taskId);
+    if (!state) {
+        return;
+    }
+
+    if (state.timer) {
+        clearTimeout(state.timer);
+    }
+
+    usageRefreshTaskPersistState.delete(taskId);
+}
+
+function scheduleUsageRefreshTaskPersist(runtimeStorage, taskId, delayMs) {
+    const state = usageRefreshTaskPersistState.get(taskId);
+    if (!state || state.timer) {
+        return;
+    }
+
+    state.timer = setTimeout(() => {
+        const latestState = usageRefreshTaskPersistState.get(taskId);
+        if (latestState) {
+            latestState.timer = null;
+        }
+        void flushUsageRefreshTaskPersist(runtimeStorage, taskId);
+    }, Math.max(0, delayMs));
+
+    if (typeof state.timer?.unref === 'function') {
+        state.timer.unref();
+    }
+}
+
+async function flushUsageRefreshTaskPersist(runtimeStorage, taskId) {
+    const state = usageRefreshTaskPersistState.get(taskId);
+    if (!state?.task) {
+        return;
+    }
+
+    if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+    }
+
+    if (state.inFlight) {
+        state.dirty = true;
+        return state.inFlight;
+    }
+
+    state.dirty = false;
+    const task = state.task;
+    state.inFlight = (async () => {
+        try {
+            await runtimeStorage.saveUsageRefreshTask(task);
+            state.lastPersistAt = Date.now();
+        } catch (error) {
+            logger.warn('[Usage API] Failed to persist usage refresh task:', error.message);
+        } finally {
+            state.inFlight = null;
+            const latestTask = state.task;
+            if (!latestTask) {
+                clearUsageRefreshTaskPersistState(taskId);
+                return;
+            }
+
+            if (state.dirty) {
+                const elapsedMs = Date.now() - state.lastPersistAt;
+                const delayMs = isTerminalUsageRefreshTask(latestTask)
+                    ? 0
+                    : Math.max(0, DEFAULT_USAGE_TASK_PERSIST_INTERVAL_MS - elapsedMs);
+                scheduleUsageRefreshTaskPersist(runtimeStorage, taskId, delayMs);
+                return;
+            }
+
+            if (isTerminalUsageRefreshTask(latestTask)) {
+                clearUsageRefreshTaskPersistState(taskId);
+            }
+        }
+    })();
+
+    return state.inFlight;
+}
+
+async function persistUsageRefreshTask(task, options = {}) {
     const runtimeStorage = getUsageTaskStorage();
     if (!runtimeStorage || !task?.id) {
         return;
     }
 
-    try {
-        await runtimeStorage.saveUsageRefreshTask(task);
-    } catch (error) {
-        logger.warn('[Usage API] Failed to persist usage refresh task:', error.message);
+    let state = usageRefreshTaskPersistState.get(task.id);
+    if (!state) {
+        state = {
+            task,
+            lastPersistAt: 0,
+            inFlight: null,
+            timer: null,
+            dirty: false
+        };
+        usageRefreshTaskPersistState.set(task.id, state);
+    } else {
+        state.task = task;
     }
+
+    const shouldForcePersist = options.force === true || state.lastPersistAt === 0 || isTerminalUsageRefreshTask(task);
+    if (shouldForcePersist) {
+        return await flushUsageRefreshTaskPersist(runtimeStorage, task.id);
+    }
+
+    if (state.inFlight) {
+        state.dirty = true;
+        return;
+    }
+
+    const elapsedMs = Date.now() - state.lastPersistAt;
+    if (elapsedMs >= DEFAULT_USAGE_TASK_PERSIST_INTERVAL_MS) {
+        return await flushUsageRefreshTaskPersist(runtimeStorage, task.id);
+    }
+
+    state.dirty = true;
+    scheduleUsageRefreshTaskPersist(runtimeStorage, task.id, DEFAULT_USAGE_TASK_PERSIST_INTERVAL_MS - elapsedMs);
 }
 
 async function loadPersistedUsageRefreshTask(taskId) {
@@ -413,7 +527,7 @@ function createUsageRefreshTask(input = {}) {
 
     usageRefreshTasks.set(task.id, task);
     pruneUsageRefreshTasks();
-    void persistUsageRefreshTask(task);
+    void persistUsageRefreshTask(task, { force: true });
     return task;
 }
 
@@ -464,6 +578,7 @@ function pruneUsageRefreshTasks() {
     for (const [taskId, task] of usageRefreshTasks.entries()) {
         if (!task) {
             usageRefreshTasks.delete(taskId);
+            clearUsageRefreshTaskPersistState(taskId);
             continue;
         }
 
@@ -471,6 +586,7 @@ function pruneUsageRefreshTasks() {
             const finishedMs = new Date(task.finishedAt).getTime();
             if (Number.isFinite(finishedMs) && now - finishedMs > USAGE_TASK_RETENTION_MS) {
                 usageRefreshTasks.delete(taskId);
+                clearUsageRefreshTaskPersistState(taskId);
             }
         }
     }
@@ -488,6 +604,7 @@ function pruneUsageRefreshTasks() {
         const record = sortedRemovable[i];
         if (record && record.id && usageRefreshTasks.has(record.id)) {
             usageRefreshTasks.delete(record.id);
+            clearUsageRefreshTaskPersistState(record.id);
             removeCount -= 1;
         }
     }
@@ -1250,7 +1367,7 @@ function startProviderUsageRefreshTask(currentConfig, providerPoolManager, provi
                 successCount: task.result.successCount,
                 errorCount: task.result.errorCount
             });
-            await persistUsageRefreshTask(task);
+            await persistUsageRefreshTask(task, { force: true });
             broadcastUsageRefreshTaskUpdate(task);
         } catch (error) {
             task.status = 'failed';
@@ -1263,7 +1380,7 @@ function startProviderUsageRefreshTask(currentConfig, providerPoolManager, provi
                 code: error?.code || null,
                 timeoutMs: error?.timeoutMs || null
             });
-            await persistUsageRefreshTask(task);
+            await persistUsageRefreshTask(task, { force: true });
             broadcastUsageRefreshTaskUpdate(task);
         } finally {
             pruneUsageRefreshTasks();
@@ -1410,14 +1527,14 @@ function startAllProvidersUsageRefreshTask(currentConfig, providerPoolManager, o
                 successCount: completedSuccessCount,
                 errorCount: completedErrorCount
             };
-            await persistUsageRefreshTask(task);
+            await persistUsageRefreshTask(task, { force: true });
             broadcastUsageRefreshTaskUpdate(task);
         } catch (error) {
             task.status = 'failed';
             task.finishedAt = new Date().toISOString();
             task.error = error.message || String(error);
             logger.error('[Usage API] Full refresh task failed:', error);
-            await persistUsageRefreshTask(task);
+            await persistUsageRefreshTask(task, { force: true });
             broadcastUsageRefreshTaskUpdate(task);
         } finally {
             pruneUsageRefreshTasks();

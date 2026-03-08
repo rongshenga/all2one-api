@@ -174,7 +174,7 @@ COMMIT;`;
         await secondExec;
     });
 
-    test('should share one fifo queue across multiple client instances for the same db path', async () => {
+    test('should isolate read and write queues across multiple client instances for the same db path', async () => {
         const firstProcess = createDeferredSpawnProcess();
         const secondProcess = createDeferredSpawnProcess();
         const thirdProcess = createDeferredSpawnProcess();
@@ -202,15 +202,15 @@ COMMIT;`;
         const thirdExec = thirdClient.exec('SELECT 3;');
 
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(mockSpawn).toHaveBeenCalledTimes(1);
-
-        firstProcess.complete();
-        await firstExec;
-        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(mockSpawn).toHaveBeenCalledTimes(2);
 
         secondProcess.complete({ stdout: '[]' });
         await expect(secondQuery).resolves.toEqual([]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(mockSpawn).toHaveBeenCalledTimes(2);
+
+        firstProcess.complete();
+        await firstExec;
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(mockSpawn).toHaveBeenCalledTimes(3);
 

@@ -7,6 +7,10 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function buildQueueKey(dbPath, queueType = 'write') {
+    return `${dbPath}::${queueType}`;
+}
+
 function inferSqliteCliErrorCode(error, fallbackMessage = '') {
     const code = String(error?.code || '').toUpperCase();
     if (code) {
@@ -74,7 +78,7 @@ ${schemaSql}
     }
 
     async exec(sql, context = {}) {
-        await this.#enqueue(() => this.#runWithRetry(sql, {
+        await this.#enqueue('write', () => this.#runWithRetry(sql, {
             ...context,
             json: false,
             operation: context.operation || 'sqlite_exec'
@@ -82,7 +86,10 @@ ${schemaSql}
     }
 
     async query(sql, context = {}) {
-        const stdout = await this.#enqueue(() => this.#runWithRetry(sql, {
+        const queueType = typeof context.queueType === 'string' && context.queueType.trim()
+            ? context.queueType.trim()
+            : 'read';
+        const stdout = await this.#enqueue(queueType, () => this.#runWithRetry(sql, {
             ...context,
             json: true,
             operation: context.operation || 'sqlite_query'
@@ -115,8 +122,8 @@ ${schemaSql}
         }
     }
 
-    async #enqueue(runner) {
-        const queueKey = this.dbPath;
+    async #enqueue(queueType, runner) {
+        const queueKey = buildQueueKey(this.dbPath, queueType);
         const previous = dbRunQueues.get(queueKey) || Promise.resolve();
         const run = previous.catch(() => undefined).then(runner);
         const tail = run.catch(() => undefined);

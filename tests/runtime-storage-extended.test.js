@@ -114,15 +114,7 @@ describe('Runtime storage extended domains', () => {
         const tempDir = await createTempDir('runtime-storage-domains-');
         const dbPath = path.join(tempDir, 'runtime.sqlite');
         const providerPoolsPath = path.join(tempDir, 'provider_pools.json');
-
-        const storage = createRuntimeStorage({
-            RUNTIME_STORAGE_BACKEND: 'db',
-            RUNTIME_STORAGE_DB_PATH: dbPath,
-            PROVIDER_POOLS_FILE_PATH: providerPoolsPath
-        });
-
-        await storage.initialize();
-        await storage.replaceUsageCacheSnapshot({
+        const expectedUsageCache = {
             timestamp: '2026-03-06T10:00:00.000Z',
             providers: {
                 'gemini-cli-oauth': {
@@ -135,15 +127,44 @@ describe('Runtime storage extended domains', () => {
                     instances: [
                         {
                             uuid: 'gemini-1',
-                            name: 'Gemini One',
+                            name: 'gemini-1',
                             success: true,
-                            usage: { usageBreakdown: [] },
-                            lastRefreshedAt: '2026-03-06T10:00:00.000Z'
+                            error: null,
+                            isDisabled: false,
+                            isHealthy: true,
+                            lastRefreshedAt: '2026-03-06T10:00:00.000Z',
+                            usage: {
+                                user: {
+                                    email: null,
+                                    userId: null
+                                },
+                                usageBreakdown: [
+                                    {
+                                        resourceType: 'tokens',
+                                        currentUsage: 0,
+                                        usageLimit: 100,
+                                        inputTokenLimit: 0,
+                                        outputTokenLimit: 0,
+                                        nextDateReset: null,
+                                        freeTrial: null,
+                                        bonuses: []
+                                    }
+                                ]
+                            }
                         }
                     ]
                 }
             }
+        };
+
+        const storage = createRuntimeStorage({
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: dbPath,
+            PROVIDER_POOLS_FILE_PATH: providerPoolsPath
         });
+
+        await storage.initialize();
+        await storage.replaceUsageCacheSnapshot(expectedUsageCache);
         await storage.saveUsageRefreshTask({
             id: 'usage-task-1',
             type: 'provider',
@@ -229,11 +250,7 @@ describe('Runtime storage extended domains', () => {
         await reopened.initialize();
 
         const usageCache = await reopened.loadUsageCacheSnapshot();
-        expect(usageCache.providers['gemini-cli-oauth']).toMatchObject({
-            totalCount: 1,
-            successCount: 1,
-            errorCount: 0
-        });
+        expect(usageCache).toEqual(expectedUsageCache);
 
         const persistedTask = await reopened.loadUsageRefreshTask('usage-task-1');
         expect(persistedTask.status).toBe('failed');

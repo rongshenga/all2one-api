@@ -671,7 +671,29 @@ WHERE meta_key = 'schema_version';
                         instances: [
                             {
                                 uuid: 'grok-fixture-1',
+                                name: 'grok-fixture-1',
                                 success: true,
+                                error: null,
+                                isDisabled: false,
+                                isHealthy: true,
+                                usage: {
+                                    user: {
+                                        email: null,
+                                        userId: null
+                                    },
+                                    usageBreakdown: [
+                                        {
+                                            resourceType: 'tokens',
+                                            currentUsage: 0,
+                                            usageLimit: 100,
+                                            inputTokenLimit: 0,
+                                            outputTokenLimit: 0,
+                                            nextDateReset: null,
+                                            freeTrial: null,
+                                            bonuses: []
+                                        }
+                                    ]
+                                },
                                 lastRefreshedAt: '2026-03-01T10:30:00.000Z'
                             }
                         ]

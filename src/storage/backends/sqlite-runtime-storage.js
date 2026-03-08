@@ -921,6 +921,52 @@ function normalizeUsageSnapshotRecord(providerType, snapshot = {}, fallbackTimes
     };
 }
 
+function normalizeUsageCompatInstanceRecord(instance = {}, fallbackTimestamp = null) {
+    if (!instance || typeof instance !== 'object') {
+        return null;
+    }
+
+    return {
+        ...instance,
+        lastRefreshedAt: normalizeIsoOrNull(
+            instance.lastRefreshedAt || instance.timestamp || instance.cachedAt || fallbackTimestamp
+        ) || fallbackTimestamp || null
+    };
+}
+
+function normalizeUsageCompatSnapshotRecord(providerType, snapshot = {}, fallbackTimestamp = null) {
+    const normalizedSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const timestamp = normalizeIsoOrNull(normalizedSnapshot.timestamp || fallbackTimestamp) || nowIso();
+    const instances = Array.isArray(normalizedSnapshot.instances)
+        ? normalizedSnapshot.instances
+            .map((instance) => normalizeUsageCompatInstanceRecord(instance, timestamp))
+            .filter(Boolean)
+        : [];
+    const successCount = Number.isFinite(normalizedSnapshot.successCount)
+        ? normalizedSnapshot.successCount
+        : instances.filter((instance) => instance.success === true).length;
+    const errorCount = Number.isFinite(normalizedSnapshot.errorCount)
+        ? normalizedSnapshot.errorCount
+        : instances.filter((instance) => instance.success !== true).length;
+    const totalCount = Number.isFinite(normalizedSnapshot.totalCount)
+        ? normalizedSnapshot.totalCount
+        : instances.length;
+    const processedCount = Number.isFinite(normalizedSnapshot.processedCount)
+        ? normalizedSnapshot.processedCount
+        : instances.length;
+
+    return {
+        ...normalizedSnapshot,
+        providerType: normalizedSnapshot.providerType || providerType,
+        timestamp,
+        instances,
+        totalCount,
+        successCount,
+        errorCount,
+        processedCount
+    };
+}
+
 function buildUsageSnapshotSummaryRecord(row = {}) {
     return {
         providerType: row.provider_type || null,
@@ -949,6 +995,7 @@ function buildLegacyUsageSnapshotFromRow(row = {}) {
 
 function buildUsageSnapshotPersistenceRows(providerType, snapshot = {}, fallbackTimestamp = null) {
     const normalizedSnapshot = normalizeUsageSnapshotRecord(providerType, snapshot, fallbackTimestamp);
+    const compatSnapshot = normalizeUsageCompatSnapshotRecord(providerType, snapshot, fallbackTimestamp);
     const snapshotId = buildUsageSnapshotId(providerType);
     const snapshotRow = {
         id: snapshotId,
@@ -959,7 +1006,7 @@ function buildUsageSnapshotPersistenceRows(providerType, snapshot = {}, fallback
         success_count: Number(normalizedSnapshot.successCount ?? 0),
         error_count: Number(normalizedSnapshot.errorCount ?? 0),
         processed_count: Number(normalizedSnapshot.processedCount ?? normalizedSnapshot.instances.length ?? 0),
-        payload_json: null
+        payload_json: JSON.stringify(compatSnapshot)
     };
 
     const instanceRows = [];
@@ -2489,6 +2536,10 @@ LIMIT 1;
     async #loadProviderUsageSnapshotFromRow(row) {
         if (!row) {
             return null;
+        }
+
+        if (row.payload_json) {
+            return buildLegacyUsageSnapshotFromRow(row);
         }
 
         const summary = buildUsageSnapshotSummaryRecord(row);
