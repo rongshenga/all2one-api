@@ -157,12 +157,12 @@ export class GeminiApiServiceAdapter extends ApiServiceAdapter {
      * 获取用量限制信息
      * @returns {Promise<Object>} 用量限制信息
      */
-    async getUsageLimits() {
+    async getUsageLimits(options = {}) {
         if (!this.geminiApiService.isInitialized) {
             logger.debug("geminiApiService not initialized, attempting to re-initialize...");
             await this.geminiApiService.initialize();
         }
-        return this.geminiApiService.getUsageLimits();
+        return this.geminiApiService.getUsageLimits(options);
     }
 }
 

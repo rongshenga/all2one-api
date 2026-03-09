@@ -13,6 +13,7 @@ let runtimeStorageState = null;
 
 const OPERATION_META = {
     loadProviderPoolsSnapshot: { phase: 'read', domain: 'provider', trackKey: 'lastCompatLoad' },
+    loadProviderPoolsSummary: { phase: 'read', domain: 'provider' },
     exportProviderPoolsSnapshot: { phase: 'export', domain: 'provider', trackKey: 'lastExport' },
     replaceProviderPoolsSnapshot: { phase: 'write', domain: 'provider', trackKey: 'lastMutation' },
     linkCredentialFiles: { phase: 'write', domain: 'provider', trackKey: 'lastMutation' },

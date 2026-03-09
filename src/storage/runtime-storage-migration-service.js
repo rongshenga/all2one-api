@@ -433,10 +433,18 @@ function resolveRuntimeStoragePaths(config = {}, options = {}) {
         options.tokenStoreFilePath || config.TOKEN_STORE_FILE_PATH || path.join(legacyBaseDir, 'token-store.json') || DEFAULT_TOKEN_STORE_PATH
     );
     const apiPotluckDataFilePath = resolvePathMaybeAbsolute(
-        options.apiPotluckDataFilePath || config.API_POTLUCK_DATA_FILE_PATH || DEFAULT_API_POTLUCK_DATA_PATH
+        options.apiPotluckDataFilePath
+        || options.potluckUserDataFilePath
+        || config.API_POTLUCK_DATA_FILE_PATH
+        || config.POTLUCK_USER_DATA_FILE_PATH
+        || DEFAULT_API_POTLUCK_DATA_PATH
     );
     const apiPotluckKeysFilePath = resolvePathMaybeAbsolute(
-        options.apiPotluckKeysFilePath || config.API_POTLUCK_KEYS_FILE_PATH || DEFAULT_API_POTLUCK_KEYS_PATH
+        options.apiPotluckKeysFilePath
+        || options.potluckKeysFilePath
+        || config.API_POTLUCK_KEYS_FILE_PATH
+        || config.POTLUCK_KEYS_FILE_PATH
+        || DEFAULT_API_POTLUCK_KEYS_PATH
     );
     const artifactRoot = resolvePathMaybeAbsolute(
         options.artifactRoot || config.RUNTIME_STORAGE_MIGRATION_ARTIFACT_ROOT || DEFAULT_ARTIFACT_ROOT
@@ -463,7 +471,12 @@ async function createSqliteStorage(config = {}, options = {}) {
         ...config,
         RUNTIME_STORAGE_DB_PATH: resolvedPaths.dbPath,
         PROVIDER_POOLS_FILE_PATH: resolvedPaths.providerPoolsFilePath,
+        USAGE_CACHE_FILE_PATH: resolvedPaths.usageCacheFilePath,
         TOKEN_STORE_FILE_PATH: resolvedPaths.tokenStoreFilePath,
+        POTLUCK_USER_DATA_FILE_PATH: resolvedPaths.apiPotluckDataFilePath,
+        POTLUCK_KEYS_FILE_PATH: resolvedPaths.apiPotluckKeysFilePath,
+        API_POTLUCK_DATA_FILE_PATH: resolvedPaths.apiPotluckDataFilePath,
+        API_POTLUCK_KEYS_FILE_PATH: resolvedPaths.apiPotluckKeysFilePath,
         RUNTIME_STORAGE_SQLITE_BINARY: resolvedPaths.sqliteBinary,
         RUNTIME_STORAGE_DB_BUSY_TIMEOUT_MS: resolvedPaths.dbBusyTimeoutMs
     });
@@ -3663,6 +3676,16 @@ export async function readAdminConfig(configPath = 'configs/config.json', overri
     const absoluteConfigPath = resolvePathMaybeAbsolute(configPath);
     const configFromFile = await readJsonFile(absoluteConfigPath, {});
     const runtimeDefaults = getRuntimeStorageDefaults();
+    const potluckDataPath = overrides.API_POTLUCK_DATA_FILE_PATH
+        || overrides.POTLUCK_USER_DATA_FILE_PATH
+        || configFromFile.API_POTLUCK_DATA_FILE_PATH
+        || configFromFile.POTLUCK_USER_DATA_FILE_PATH
+        || DEFAULT_API_POTLUCK_DATA_PATH;
+    const potluckKeysPath = overrides.API_POTLUCK_KEYS_FILE_PATH
+        || overrides.POTLUCK_KEYS_FILE_PATH
+        || configFromFile.API_POTLUCK_KEYS_FILE_PATH
+        || configFromFile.POTLUCK_KEYS_FILE_PATH
+        || DEFAULT_API_POTLUCK_KEYS_PATH;
 
     return {
         ...runtimeDefaults,
@@ -3671,8 +3694,10 @@ export async function readAdminConfig(configPath = 'configs/config.json', overri
         PROVIDER_POOLS_FILE_PATH: overrides.PROVIDER_POOLS_FILE_PATH || configFromFile.PROVIDER_POOLS_FILE_PATH || DEFAULT_PROVIDER_POOLS_PATH,
         RUNTIME_STORAGE_DB_PATH: overrides.RUNTIME_STORAGE_DB_PATH || configFromFile.RUNTIME_STORAGE_DB_PATH || runtimeDefaults.RUNTIME_STORAGE_DB_PATH,
         USAGE_CACHE_FILE_PATH: overrides.USAGE_CACHE_FILE_PATH || configFromFile.USAGE_CACHE_FILE_PATH || DEFAULT_USAGE_CACHE_PATH,
-        API_POTLUCK_DATA_FILE_PATH: overrides.API_POTLUCK_DATA_FILE_PATH || configFromFile.API_POTLUCK_DATA_FILE_PATH || DEFAULT_API_POTLUCK_DATA_PATH,
-        API_POTLUCK_KEYS_FILE_PATH: overrides.API_POTLUCK_KEYS_FILE_PATH || configFromFile.API_POTLUCK_KEYS_FILE_PATH || DEFAULT_API_POTLUCK_KEYS_PATH,
+        API_POTLUCK_DATA_FILE_PATH: potluckDataPath,
+        API_POTLUCK_KEYS_FILE_PATH: potluckKeysPath,
+        POTLUCK_USER_DATA_FILE_PATH: potluckDataPath,
+        POTLUCK_KEYS_FILE_PATH: potluckKeysPath,
         RUNTIME_STORAGE_MIGRATION_ARTIFACT_ROOT: overrides.RUNTIME_STORAGE_MIGRATION_ARTIFACT_ROOT || configFromFile.RUNTIME_STORAGE_MIGRATION_ARTIFACT_ROOT || DEFAULT_ARTIFACT_ROOT
     };
 }

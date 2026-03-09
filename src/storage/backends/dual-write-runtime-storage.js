@@ -236,6 +236,16 @@ export class DualWriteRuntimeStorage {
         });
     }
 
+    async loadProviderPoolsSummary(options = {}) {
+        return await executePrimary(this.primaryStorage, 'loadProviderPoolsSummary', 'read', async (storage) => {
+            return await storage.loadProviderPoolsSummary(options);
+        }, {
+            replaySafe: true,
+            replayBoundary: 'provider_summary_read',
+            idempotencyKey: 'provider_summary_read'
+        });
+    }
+
     async replaceProviderPoolsSnapshot(providerPools = {}, options = {}) {
         return await executeMirroredWrite(
             this,

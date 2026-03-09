@@ -27,6 +27,7 @@ const PROVIDER_DETAILS_LOADING_DELAY_MS = 180;
 let providersSectionLoadingCount = 0;
 let providerDetailsGlobalLoadingCount = 0;
 let providerDetailsGlobalLoadingEl = null;
+let providersLoadPromise = null;
 
 function logProviderDebug(message, payload = null, level = 'log') {
     if (typeof window === 'undefined' || typeof window.logUiDebug !== 'function') {
@@ -686,7 +687,7 @@ function updateTimeDisplay() {
 /**
  * 加载提供商列表
  */
-async function loadProviders() {
+async function loadProvidersInternal() {
     let loadingTimer = null;
     let hasDisplayedSectionLoading = false;
     const startedAt = Date.now();
@@ -757,6 +758,25 @@ async function loadProviders() {
                 setProvidersSectionLoading(false);
             }
         }
+    }
+}
+
+async function loadProviders(options = {}) {
+    if (options?.bypassInFlight !== true && providersLoadPromise) {
+        logProviderDebug('loadProviders reused in-flight request');
+        return await providersLoadPromise;
+    }
+
+    const runner = loadProvidersInternal();
+    if (options?.bypassInFlight === true) {
+        return await runner;
+    }
+
+    providersLoadPromise = runner;
+    try {
+        return await providersLoadPromise;
+    } finally {
+        providersLoadPromise = null;
     }
 }
 

@@ -114,6 +114,12 @@ function getUsageProviderSummary(providerType, providerData = {}) {
     };
 }
 
+function clearRenderedChildren(element) {
+    if (Array.isArray(element?.children)) {
+        element.children.length = 0;
+    }
+}
+
 function filterRenderableInstances(instances = []) {
     const validInstances = [];
     for (const instance of instances) {
@@ -131,6 +137,7 @@ function filterRenderableInstances(instances = []) {
 function renderUsageGroupCards(gridContainer, providerType, instances = []) {
     if (!gridContainer) return;
     gridContainer.innerHTML = '';
+    clearRenderedChildren(gridContainer);
 
     const validInstances = filterRenderableInstances(instances);
     for (const instance of validInstances) {
@@ -149,6 +156,7 @@ function renderUsageGroupPlaceholder(content, providerSummary, state = 'idle') {
                 <p>${t('usage.loading')}</p>
             </div>
         `;
+        clearRenderedChildren(content);
         return;
     }
 
@@ -159,6 +167,7 @@ function renderUsageGroupPlaceholder(content, providerSummary, state = 'idle') {
                 <p>${t('usage.failedToLoad')}</p>
             </div>
         `;
+        clearRenderedChildren(content);
         return;
     }
 
@@ -169,6 +178,7 @@ function renderUsageGroupPlaceholder(content, providerSummary, state = 'idle') {
             <p>${totalCount > 0 ? t('usage.group.expandAll') : t('usage.noInstances')}</p>
         </div>
     `;
+    clearRenderedChildren(content);
 }
 
 function ensureUsageGroupGridContainer(groupContainer, content) {
@@ -187,16 +197,53 @@ function ensureUsageGroupGridContainer(groupContainer, content) {
     return gridContainer;
 }
 
+function findUsageProviderGroup(providerType) {
+    const usageContent = document.getElementById('usageContent');
+    const groups = Array.from(usageContent?.children || []);
+    for (let index = groups.length - 1; index >= 0; index -= 1) {
+        const group = groups[index];
+        if (group?.dataset?.providerType === providerType) {
+            return group;
+        }
+    }
+    return null;
+}
+
+function invalidateProviderUsageDetailsCache(providerType, groupContainer = null) {
+    usageProviderDetailsPromises.delete(providerType);
+    const targetGroup = groupContainer || findUsageProviderGroup(providerType);
+    if (!targetGroup) {
+        return null;
+    }
+
+    targetGroup.dataset.detailsLoaded = 'false';
+    targetGroup.dataset.detailsLoading = 'false';
+    if (targetGroup.__usageProviderData) {
+        targetGroup.__usageProviderData = {
+            ...targetGroup.__usageProviderData,
+            detailsLoaded: false
+        };
+    }
+
+    return targetGroup;
+}
+
 async function ensureProviderUsageDetailsLoaded(providerType, groupContainer, providerSummary) {
     if (!groupContainer || !providerType) {
         return null;
     }
 
     if (groupContainer.dataset.detailsLoaded === 'true') {
+        logUsageUiDebug('provider usage details reused from rendered state', {
+            providerType
+        });
         return groupContainer.__usageProviderData || providerSummary || null;
     }
 
     if (usageProviderDetailsPromises.has(providerType)) {
+        logUsageUiDebug('provider usage details reused in-flight request', {
+            providerType
+        });
         return await usageProviderDetailsPromises.get(providerType);
     }
 
@@ -740,6 +787,7 @@ function renderUsageData(data, container) {
 
     // 清空容器
     container.innerHTML = '';
+    clearRenderedChildren(container);
 
     if (!data || !data.providers || Object.keys(data.providers).length === 0) {
         container.innerHTML = `
@@ -800,10 +848,31 @@ export async function refreshProviderUsage(providerType) {
 
     try {
         const providerName = getProviderDisplayName(providerType);
+        const previousGroup = findUsageProviderGroup(providerType);
+        const shouldRestoreExpandedDetails = Boolean(previousGroup && !previousGroup.classList.contains('collapsed'));
+        invalidateProviderUsageDetailsCache(providerType, previousGroup);
+
+        logUsageUiDebug('provider usage refresh started', {
+            providerType,
+            restoreExpandedDetails: shouldRestoreExpandedDetails
+        });
         showToast(t('common.info'), t('usage.refreshingProvider', { name: providerName }), 'info');
 
         await runUsageRefreshTask(`/api/usage/${providerType}?refresh=true&async=true`, loadingEl, providerName);
-        await loadUsage();
+        await loadUsage({ bypassInFlight: true });
+
+        const refreshedGroup = invalidateProviderUsageDetailsCache(providerType);
+        if (shouldRestoreExpandedDetails && refreshedGroup) {
+            refreshedGroup.classList.remove('collapsed');
+            await ensureProviderUsageDetailsLoaded(
+                providerType,
+                refreshedGroup,
+                refreshedGroup.__usageProviderData || getUsageProviderSummary(providerType, {})
+            );
+            logUsageUiDebug('provider usage refresh reloaded details', {
+                providerType
+            });
+        }
 
         if (isUsageSectionActive()) {
             showToast(t('common.success'), t('usage.taskCompleted'), 'success');

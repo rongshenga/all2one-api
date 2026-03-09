@@ -41,13 +41,57 @@ function translate(key, params = {}) {
     return map[key] || key;
 }
 
+function createFakeClassList() {
+    const classes = new Set();
+    return {
+        add(name) {
+            classes.add(name);
+        },
+        remove(name) {
+            classes.delete(name);
+        },
+        toggle(name, force) {
+            if (force === undefined) {
+                if (classes.has(name)) {
+                    classes.delete(name);
+                    return false;
+                }
+                classes.add(name);
+                return true;
+            }
+            if (force) {
+                classes.add(name);
+                return true;
+            }
+            classes.delete(name);
+            return false;
+        },
+        contains(name) {
+            return classes.has(name);
+        }
+    };
+}
+
 function createFakeElement() {
     return {
         textContent: '',
+        innerHTML: '',
         hidden: false,
         disabled: false,
         dataset: {},
         attributes: {},
+        style: {},
+        className: '',
+        classList: createFakeClassList(),
+        children: [],
+        appendChild(child) {
+            this.children.push(child);
+            return child;
+        },
+        addEventListener() {},
+        querySelector() {
+            return null;
+        },
         setAttribute(name, value) {
             this.attributes[name] = String(value);
         },
@@ -159,6 +203,75 @@ describe('Runtime storage dashboard diagnostics UI', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         providerStats.providerTypeStats = {};
+    });
+
+    test('should reuse in-flight providers summary requests', async () => {
+        const providerManagerModule = await importProviderManagerModule();
+        const providersLoading = createFakeElement();
+        const providersList = createFakeElement();
+        const providersContainer = createFakeElement();
+        const statsGrid = createFakeElement();
+        const activeProviders = createFakeElement();
+        const healthyProviders = createFakeElement();
+        const activeConnections = createFakeElement();
+
+        global.document = {
+            getElementById: jest.fn((id) => ({
+                providersLoading,
+                providersList,
+                activeProviders,
+                healthyProviders,
+                activeConnections
+            }[id] || null)),
+            querySelector: jest.fn((selector) => {
+                if (selector === '#providers .providers-container') return providersContainer;
+                if (selector === '#providers .stats-grid') return statsGrid;
+                return null;
+            }),
+            createElement: jest.fn(() => createFakeElement())
+        };
+
+        global.window.setTimeout = setTimeout;
+        global.window.clearTimeout = clearTimeout;
+        mockGetProviderConfigs.mockReturnValue([{
+            id: 'grok-custom',
+            name: 'Grok Reverse',
+            visible: true
+        }]);
+
+        let resolveSummary;
+        const summaryPromise = new Promise((resolve) => {
+            resolveSummary = resolve;
+        });
+        global.window.apiClient.get.mockImplementation((url) => {
+            if (url === '/providers/summary') {
+                return summaryPromise;
+            }
+            if (url === '/providers/supported') {
+                return Promise.resolve(['grok-custom']);
+            }
+            return Promise.reject(new Error(`Unexpected url: ${url}`));
+        });
+
+        const firstLoad = providerManagerModule.loadProviders();
+        const secondLoad = providerManagerModule.loadProviders();
+        await Promise.resolve();
+
+        expect(global.window.apiClient.get.mock.calls.filter(([url]) => url === '/providers/summary')).toHaveLength(1);
+
+        resolveSummary({
+            'grok-custom': {
+                totalCount: 1,
+                healthyCount: 1,
+                usageCount: 2,
+                errorCount: 0
+            }
+        });
+
+        await Promise.all([firstLoad, secondLoad]);
+
+        expect(global.window.apiClient.get.mock.calls.filter(([url]) => url === '/providers/summary')).toHaveLength(1);
+        expect(global.window.apiClient.get.mock.calls.filter(([url]) => url === '/providers/supported')).toHaveLength(1);
     });
 
     test('should build diagnostics view model with fallback warning and readonly actions', async () => {

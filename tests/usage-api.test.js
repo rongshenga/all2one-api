@@ -543,4 +543,110 @@ describe('Usage API Refresh Cache Strategy', () => {
     expect(invalidStatus.status).toBe('completed');
     expect(invalidStatus.progress.totalGroups).toBe(1);
 });
+
+    test('should pass timeout signal to adapter usage requests and abort timed out instance queries', async () => {
+        const providerType = 'gemini-cli-oauth';
+        const providers = [
+            { uuid: 'gemini-1', customName: 'Gemini-1' }
+        ];
+
+        mockReadUsageCache.mockResolvedValue(null);
+        mockReadProviderUsageCache.mockResolvedValue(null);
+        mockUpdateProviderUsageCache.mockResolvedValue(undefined);
+
+        const seenOptions = [];
+        serviceInstances[`${providerType}gemini-1`] = {
+            getUsageLimits: jest.fn(async (options = {}) => {
+                seenOptions.push(options);
+                return await new Promise(() => {});
+            })
+        };
+
+        const req = {
+            url: `/api/usage/${encodeURIComponent(providerType)}?refresh=true`,
+            headers: {
+                host: 'localhost:3000'
+            }
+        };
+        const res = createMockRes();
+        const currentConfig = {
+            providerPools: {
+                [providerType]: providers
+            },
+            PROVIDER_USAGE_INSTANCE_TIMEOUT_MS: 10
+        };
+        const providerPoolManager = {
+            providerPools: {
+                [providerType]: providers
+            }
+        };
+
+        const handled = await handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const payload = JSON.parse(res.body);
+        expect(payload.errorCount).toBe(1);
+        expect(serviceInstances[`${providerType}gemini-1`].getUsageLimits).toHaveBeenCalledTimes(1);
+        expect(seenOptions).toHaveLength(1);
+        expect(seenOptions[0]).toEqual(expect.objectContaining({
+            timeoutMs: 10,
+            signal: expect.any(Object)
+        }));
+        expect(seenOptions[0].signal.aborted).toBe(true);
+    });
+
+    test('should cap gemini cli usage refresh concurrency to provider-specific limit', async () => {
+        const providerType = 'gemini-cli-oauth';
+        const providers = buildProviderPool('gemini', 5);
+
+        mockReadUsageCache.mockResolvedValue(null);
+        mockReadProviderUsageCache.mockResolvedValue(null);
+        mockUpdateProviderUsageCache.mockResolvedValue(undefined);
+
+        let activeRequests = 0;
+        let maxConcurrentRequests = 0;
+        for (const provider of providers) {
+            serviceInstances[`${providerType}${provider.uuid}`] = {
+                getUsageLimits: jest.fn(async () => {
+                    activeRequests += 1;
+                    maxConcurrentRequests = Math.max(maxConcurrentRequests, activeRequests);
+                    await sleep(15);
+                    activeRequests -= 1;
+                    return {
+                        usageBreakdown: []
+                    };
+                })
+            };
+        }
+
+        const req = {
+            url: `/api/usage/${encodeURIComponent(providerType)}?refresh=true&concurrency=8`,
+            headers: {
+                host: 'localhost:3000'
+            }
+        };
+        const res = createMockRes();
+        const currentConfig = {
+            providerPools: {
+                [providerType]: providers
+            },
+            USAGE_QUERY_CONCURRENCY_PER_PROVIDER: 8,
+            GEMINI_CLI_USAGE_QUERY_CONCURRENCY_PER_PROVIDER: 2
+        };
+        const providerPoolManager = {
+            providerPools: {
+                [providerType]: providers
+            }
+        };
+
+        const handled = await handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const payload = JSON.parse(res.body);
+        expect(payload.totalCount).toBe(5);
+        expect(payload.successCount).toBe(5);
+        expect(maxConcurrentRequests).toBeLessThanOrEqual(2);
+    });
 });

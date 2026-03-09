@@ -47,6 +47,10 @@ let isDirty = false;
 let isWriting = false;
 let persistTimer = null;
 let currentPersistInterval = DEFAULT_CONFIG.persistInterval;
+let processHooksRegistered = false;
+let beforeExitHandler = null;
+let sigintHandler = null;
+let sigtermHandler = null;
 
 
 function createEmptyKeyStore() {
@@ -88,15 +92,48 @@ function getPotluckKeyStorage() {
     return runtimeStorage;
 }
 
+function ensureProcessPersistHooks() {
+    if (processHooksRegistered) {
+        return;
+    }
+
+    beforeExitHandler = () => { void persistIfDirty(); };
+    sigintHandler = () => { void persistIfDirty(); };
+    sigtermHandler = () => { void persistIfDirty(); };
+    process.on('beforeExit', beforeExitHandler);
+    process.on('SIGINT', sigintHandler);
+    process.on('SIGTERM', sigtermHandler);
+    processHooksRegistered = true;
+}
+
+function removeProcessPersistHooks() {
+    if (!processHooksRegistered) {
+        return;
+    }
+
+    if (beforeExitHandler) {
+        process.off('beforeExit', beforeExitHandler);
+    }
+    if (sigintHandler) {
+        process.off('SIGINT', sigintHandler);
+    }
+    if (sigtermHandler) {
+        process.off('SIGTERM', sigtermHandler);
+    }
+
+    beforeExitHandler = null;
+    sigintHandler = null;
+    sigtermHandler = null;
+    processHooksRegistered = false;
+}
+
 function ensurePersistTimer() {
     if (!persistTimer) {
         persistTimer = setInterval(persistIfDirty, currentPersistInterval);
         if (typeof persistTimer.unref === 'function') {
             persistTimer.unref();
         }
-        process.on('beforeExit', () => { void persistIfDirty(); });
-        process.on('SIGINT', () => { void persistIfDirty(); process.exit(0); });
-        process.on('SIGTERM', () => { void persistIfDirty(); process.exit(0); });
+        ensureProcessPersistHooks();
     }
 }
 
@@ -146,6 +183,7 @@ export async function resetKeyManagerForTests() {
         clearInterval(persistTimer);
         persistTimer = null;
     }
+    removeProcessPersistHooks();
     keyStore = null;
     isDirty = false;
     isWriting = false;

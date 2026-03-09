@@ -71,6 +71,33 @@ function getSessionStorage() {
     return runtimeStorage;
 }
 
+function getRuntimeStorageBackend(runtimeStorage = null) {
+    const storage = runtimeStorage || getRuntimeStorage();
+    if (!storage) {
+        return null;
+    }
+
+    try {
+        const info = typeof storage.getInfo === 'function' ? storage.getInfo() : null;
+        if (info?.backend && typeof info.backend === 'string') {
+            return info.backend.toLowerCase();
+        }
+    } catch {
+        // ignore
+    }
+
+    if (storage.kind && typeof storage.kind === 'string') {
+        return storage.kind.toLowerCase();
+    }
+
+    return null;
+}
+
+function shouldDisableTokenStoreFallback(runtimeStorage = null) {
+    const backend = getRuntimeStorageBackend(runtimeStorage);
+    return backend === 'db' || backend === 'dual-write';
+}
+
 export async function readPasswordFile() {
     const pwdFilePath = path.join(process.cwd(), 'configs', 'pwd');
     try {
@@ -267,6 +294,16 @@ export async function verifyToken(token, options = {}) {
                 return cachedToken;
             } catch (error) {
                 logger.error('[Auth] Failed to verify token via runtime storage:', error.message);
+                if (shouldDisableTokenStoreFallback(sessionStorage)) {
+                    removeCachedToken(token);
+                    logAuthDebug(debugEnabled, 'verifyToken runtime storage failure without token store fallback', {
+                        tokenId: tokenDebugId,
+                        durationMs: Date.now() - startedAt,
+                        source: 'runtime_storage',
+                        fallback: 'disabled'
+                    });
+                    return null;
+                }
             }
         }
 

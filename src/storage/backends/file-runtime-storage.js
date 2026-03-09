@@ -13,6 +13,19 @@ import {
     isPathUsed
 } from '../../utils/provider-utils.js';
 
+function buildProviderPoolsSummary(providerPools = {}) {
+    return Object.entries(providerPools || {}).reduce((summaries, [providerType, providers]) => {
+        const providerList = Array.isArray(providers) ? providers : [];
+        summaries[providerType] = {
+            totalCount: providerList.length,
+            healthyCount: providerList.filter((provider) => provider?.isHealthy && !provider?.isDisabled).length,
+            usageCount: providerList.reduce((sum, provider) => sum + Number(provider?.usageCount || 0), 0),
+            errorCount: providerList.reduce((sum, provider) => sum + Number(provider?.errorCount || 0), 0)
+        };
+        return summaries;
+    }, {});
+}
+
 function cloneJson(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
@@ -67,8 +80,12 @@ export class FileRuntimeStorage {
         this.filePath = config.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
         this.usageCacheFile = config.USAGE_CACHE_FILE_PATH || 'configs/usage-cache.json';
         this.tokenStoreFile = config.TOKEN_STORE_FILE_PATH || 'configs/token-store.json';
-        this.potluckUserDataFile = config.POTLUCK_USER_DATA_FILE_PATH || 'configs/api-potluck-data.json';
-        this.potluckKeysFile = config.POTLUCK_KEYS_FILE_PATH || 'configs/api-potluck-keys.json';
+        this.potluckUserDataFile = config.POTLUCK_USER_DATA_FILE_PATH
+            || config.API_POTLUCK_DATA_FILE_PATH
+            || 'configs/api-potluck-data.json';
+        this.potluckKeysFile = config.POTLUCK_KEYS_FILE_PATH
+            || config.API_POTLUCK_KEYS_FILE_PATH
+            || 'configs/api-potluck-keys.json';
         this.kind = 'file';
         this.usageRefreshTasks = new Map();
     }
@@ -94,6 +111,11 @@ export class FileRuntimeStorage {
 
     async exportProviderPoolsSnapshot() {
         return await this.loadProviderPoolsSnapshot();
+    }
+
+    async loadProviderPoolsSummary() {
+        const providerPools = await this.loadProviderPoolsSnapshot();
+        return buildProviderPoolsSummary(providerPools);
     }
 
     async replaceProviderPoolsSnapshot(providerPools = {}) {

@@ -13,6 +13,10 @@ class ProviderStorageDomainFacade extends StorageDomainFacade {
         return await this.storage.exportProviderPoolsSnapshot(options);
     }
 
+    async loadPoolsSummary(options = {}) {
+        return await this.storage.loadProviderPoolsSummary(options);
+    }
+
     async replacePoolsSnapshot(providerPools = {}, options = {}) {
         return await this.storage.replaceProviderPoolsSnapshot(providerPools, options);
     }
@@ -212,6 +216,10 @@ export class RuntimeStorageFacade {
 
     async exportProviderPoolsSnapshot(options = {}) {
         return await this.provider.exportPoolsSnapshot(options);
+    }
+
+    async loadProviderPoolsSummary(options = {}) {
+        return await this.provider.loadPoolsSummary(options);
     }
 
     async replaceProviderPoolsSnapshot(providerPools = {}, options = {}) {

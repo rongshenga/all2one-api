@@ -287,6 +287,143 @@ describe('Runtime storage extended domains', () => {
         await reopened.close();
     });
 
+    test('should not re-import legacy files after sqlite domain tables are manually cleared', async () => {
+        const tempDir = await createTempDir('runtime-storage-no-reimport-');
+        const dbPath = path.join(tempDir, 'runtime.sqlite');
+        const providerPoolsPath = path.join(tempDir, 'provider_pools.json');
+        const usageCachePath = path.join(tempDir, 'usage-cache.json');
+        const tokenStorePath = path.join(tempDir, 'token-store.json');
+        const potluckDataPath = path.join(tempDir, 'api-potluck-data.json');
+        const potluckKeysPath = path.join(tempDir, 'api-potluck-keys.json');
+        const legacyToken = 'legacy-token-1';
+
+        await fs.writeFile(providerPoolsPath, JSON.stringify({
+            'grok-custom': [
+                {
+                    uuid: 'legacy-grok-1',
+                    customName: 'Legacy Grok',
+                    GROK_COOKIE_TOKEN: 'legacy-cookie'
+                }
+            ]
+        }, null, 2), 'utf8');
+        await fs.writeFile(usageCachePath, JSON.stringify({
+            timestamp: '2026-03-06T10:00:00.000Z',
+            providers: {
+                'grok-custom': {
+                    providerType: 'grok-custom',
+                    timestamp: '2026-03-06T10:00:00.000Z',
+                    totalCount: 1,
+                    successCount: 1,
+                    errorCount: 0,
+                    processedCount: 1,
+                    instances: []
+                }
+            }
+        }, null, 2), 'utf8');
+        await fs.writeFile(tokenStorePath, JSON.stringify({
+            tokens: {
+                [legacyToken]: {
+                    username: 'admin',
+                    loginTime: Date.parse('2026-03-06T10:00:00.000Z'),
+                    expiryTime: Date.parse('2099-03-06T10:00:00.000Z'),
+                    sourceIp: '127.0.0.1',
+                    userAgent: 'legacy-test'
+                }
+            }
+        }, null, 2), 'utf8');
+        await fs.writeFile(potluckDataPath, JSON.stringify({
+            config: {
+                defaultDailyLimit: 777
+            },
+            users: {
+                legacy_user: {
+                    credentials: [],
+                    credentialBonuses: [],
+                    createdAt: '2026-03-06T10:00:00.000Z'
+                }
+            }
+        }, null, 2), 'utf8');
+        await fs.writeFile(potluckKeysPath, JSON.stringify({
+            keys: {
+                legacy_key: {
+                    id: 'legacy_key',
+                    name: 'Legacy Key',
+                    createdAt: '2026-03-06T10:00:00.000Z',
+                    dailyLimit: 777,
+                    todayUsage: 2,
+                    totalUsage: 9,
+                    lastResetDate: '2026-03-06',
+                    enabled: true,
+                    bonusRemaining: 3
+                }
+            }
+        }, null, 2), 'utf8');
+
+        const storage = createRuntimeStorage({
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: dbPath,
+            PROVIDER_POOLS_FILE_PATH: providerPoolsPath,
+            USAGE_CACHE_FILE_PATH: usageCachePath,
+            TOKEN_STORE_FILE_PATH: tokenStorePath,
+            API_POTLUCK_DATA_FILE_PATH: potluckDataPath,
+            API_POTLUCK_KEYS_FILE_PATH: potluckKeysPath
+        });
+        await storage.initialize();
+
+        expect(await storage.loadProviderPoolsSnapshot()).toMatchObject({
+            'grok-custom': [expect.objectContaining({ uuid: 'legacy-grok-1' })]
+        });
+        expect(await storage.loadUsageCacheSnapshot()).toMatchObject({
+            providers: {
+                'grok-custom': expect.objectContaining({
+                    totalCount: 1
+                })
+            }
+        });
+        expect(await storage.getAdminSession(legacyToken)).toMatchObject({
+            username: 'admin'
+        });
+        expect(await storage.loadPotluckUserData()).toMatchObject({
+            config: {
+                defaultDailyLimit: 777
+            }
+        });
+        expect(await storage.loadPotluckKeyStore()).toMatchObject({
+            keys: {
+                legacy_key: expect.objectContaining({
+                    dailyLimit: 777
+                })
+            }
+        });
+
+        await storage.client.exec(`
+BEGIN IMMEDIATE;
+DELETE FROM provider_registrations;
+DELETE FROM usage_snapshots WHERE provider_id IS NULL;
+DELETE FROM admin_sessions;
+DELETE FROM potluck_user_credentials;
+DELETE FROM potluck_users;
+DELETE FROM potluck_config;
+DELETE FROM potluck_key_usage_daily;
+DELETE FROM potluck_api_keys;
+DELETE FROM runtime_settings WHERE scope = 'potluck-key-meta';
+COMMIT;
+        `);
+
+        expect(await storage.loadProviderPoolsSnapshot()).toEqual({});
+        expect(await storage.loadUsageCacheSnapshot()).toBeNull();
+        expect(await storage.getAdminSession(legacyToken)).toBeNull();
+        expect(await storage.loadPotluckUserData()).toEqual({
+            config: {},
+            users: {}
+        });
+        expect(await storage.loadPotluckKeyStore()).toEqual({
+            keys: {}
+        });
+
+        await storage.close();
+    });
+
     test('should keep only the last flushed provider runtime snapshot durable across restart', async () => {
         const tempDir = await createTempDir('runtime-storage-provider-crash-window-');
         const dbPath = path.join(tempDir, 'runtime.sqlite');

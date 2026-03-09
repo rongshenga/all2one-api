@@ -10,6 +10,7 @@ import { getRuntimeStorage } from '../storage/runtime-storage-registry.js';
 
 const supportedProviders = ['claude-kiro-oauth', 'gemini-cli-oauth', 'gemini-antigravity', 'openai-codex-oauth', 'grok-custom'];
 const DEFAULT_USAGE_QUERY_CONCURRENCY_PER_PROVIDER = 8;
+const DEFAULT_GEMINI_CLI_USAGE_QUERY_CONCURRENCY_PER_PROVIDER = 2;
 const MAX_USAGE_QUERY_CONCURRENCY_PER_PROVIDER = 64;
 const DEFAULT_USAGE_QUERY_GROUP_SIZE = 100;
 const MAX_USAGE_QUERY_GROUP_SIZE = 500;
@@ -150,19 +151,27 @@ function createTimeoutError(message, timeoutMs, details = {}) {
 
 async function withTimeout(promiseFactory, timeoutMs, message, details = {}) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-        return await promiseFactory();
+        return await promiseFactory({ signal: null, timeoutMs: null });
     }
 
     let timeoutId = null;
+    const abortController = typeof AbortController === 'function' ? new AbortController() : null;
     const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
-            reject(createTimeoutError(message, timeoutMs, details));
+            const timeoutError = createTimeoutError(message, timeoutMs, details);
+            if (abortController) {
+                abortController.abort(timeoutError);
+            }
+            reject(timeoutError);
         }, timeoutMs);
     });
 
     try {
         return await Promise.race([
-            Promise.resolve().then(() => promiseFactory()),
+            Promise.resolve().then(() => promiseFactory({
+                signal: abortController?.signal || null,
+                timeoutMs
+            })),
             timeoutPromise
         ]);
     } finally {
@@ -451,6 +460,20 @@ function resolveUsageQueryConcurrency(currentConfig, concurrencyOverride = null)
         || DEFAULT_USAGE_QUERY_CONCURRENCY_PER_PROVIDER;
 
     return Math.min(resolved, MAX_USAGE_QUERY_CONCURRENCY_PER_PROVIDER);
+}
+
+function resolveProviderUsageQueryConcurrency(providerType, currentConfig, concurrencyOverride = null) {
+    const baseConcurrency = resolveUsageQueryConcurrency(currentConfig, concurrencyOverride);
+    const providerSpecificLimit = providerType === 'gemini-cli-oauth'
+        ? (parsePositiveInt(currentConfig?.GEMINI_CLI_USAGE_QUERY_CONCURRENCY_PER_PROVIDER)
+            || DEFAULT_GEMINI_CLI_USAGE_QUERY_CONCURRENCY_PER_PROVIDER)
+        : null;
+
+    if (!providerSpecificLimit) {
+        return baseConcurrency;
+    }
+
+    return Math.max(1, Math.min(baseConcurrency, providerSpecificLimit));
 }
 
 /**
@@ -912,7 +935,7 @@ async function getAllProvidersUsage(currentConfig, providerPoolManager, options 
  * @param {Object} provider - 提供商实例配置
  * @returns {Promise<Object>} 单实例查询结果
  */
-async function queryUsageForProviderInstance(providerType, provider) {
+async function queryUsageForProviderInstance(providerType, provider, options = {}) {
     const instanceResult = {
         uuid: provider?.uuid || 'unknown',
         name: getProviderDisplayName(provider, providerType),
@@ -953,7 +976,7 @@ async function queryUsageForProviderInstance(providerType, provider) {
         }
 
         if (adapter) {
-            const usage = await getAdapterUsage(adapter, providerType);
+            const usage = await getAdapterUsage(adapter, providerType, options);
             instanceResult.success = true;
             instanceResult.usage = usage;
         }
@@ -1027,7 +1050,15 @@ async function getProviderTypeUsage(providerType, currentConfig, providerPoolMan
         }
     });
 
-    const queryConcurrency = resolveUsageQueryConcurrency(currentConfig, options.usageConcurrency);
+    const requestedQueryConcurrency = resolveUsageQueryConcurrency(currentConfig, options.usageConcurrency);
+    const queryConcurrency = resolveProviderUsageQueryConcurrency(providerType, currentConfig, options.usageConcurrency);
+    if (queryConcurrency !== requestedQueryConcurrency) {
+        logUsageLifecycle(lifecycleLoggingEnabled, `Provider usage concurrency limited for ${providerType}`, {
+            providerType,
+            requestedConcurrency: requestedQueryConcurrency,
+            effectiveConcurrency: queryConcurrency
+        });
+    }
     const groupSize = resolveUsageQueryGroupSize(currentConfig, options.groupSize);
     const groupMinPoolSize = resolveUsageQueryGroupMinPoolSize(currentConfig, options.groupMinPoolSize);
     const shouldUseGrouping = providerCandidates.length >= groupMinPoolSize;
@@ -1123,7 +1154,10 @@ async function getProviderTypeUsage(providerType, currentConfig, providerPoolMan
         await mapWithConcurrency(groupCandidates, queryConcurrency, async (candidate) => {
             const instanceTimeoutMs = resolveProviderUsageInstanceTimeout(currentConfig);
             const instanceResult = await withTimeout(
-                () => queryUsageForProviderInstance(providerType, candidate.provider),
+                ({ signal, timeoutMs }) => queryUsageForProviderInstance(providerType, candidate.provider, {
+                    signal,
+                    timeoutMs
+                }),
                 instanceTimeoutMs,
                 `Usage query timed out for ${providerType}:${candidate.provider?.uuid || 'unknown'} after ${instanceTimeoutMs}ms`,
                 {
@@ -1193,13 +1227,13 @@ async function getProviderTypeUsage(providerType, currentConfig, providerPoolMan
  * @param {string} providerType - 提供商类型
  * @returns {Promise<Object>} 用量信息
  */
-async function getAdapterUsage(adapter, providerType) {
+async function getAdapterUsage(adapter, providerType, options = {}) {
     if (providerType === 'claude-kiro-oauth') {
         if (typeof adapter.getUsageLimits === 'function') {
-            const rawUsage = await adapter.getUsageLimits();
+            const rawUsage = await adapter.getUsageLimits(options);
             return formatKiroUsage(rawUsage);
         } else if (adapter.kiroApiService && typeof adapter.kiroApiService.getUsageLimits === 'function') {
-            const rawUsage = await adapter.kiroApiService.getUsageLimits();
+            const rawUsage = await adapter.kiroApiService.getUsageLimits(options);
             return formatKiroUsage(rawUsage);
         }
         throw new Error('This adapter does not support usage query');
@@ -1207,10 +1241,10 @@ async function getAdapterUsage(adapter, providerType) {
     
     if (providerType === 'gemini-cli-oauth') {
         if (typeof adapter.getUsageLimits === 'function') {
-            const rawUsage = await adapter.getUsageLimits();
+            const rawUsage = await adapter.getUsageLimits(options);
             return formatGeminiUsage(rawUsage);
         } else if (adapter.geminiApiService && typeof adapter.geminiApiService.getUsageLimits === 'function') {
-            const rawUsage = await adapter.geminiApiService.getUsageLimits();
+            const rawUsage = await adapter.geminiApiService.getUsageLimits(options);
             return formatGeminiUsage(rawUsage);
         }
         throw new Error('This adapter does not support usage query');
@@ -1218,10 +1252,10 @@ async function getAdapterUsage(adapter, providerType) {
     
     if (providerType === 'gemini-antigravity') {
         if (typeof adapter.getUsageLimits === 'function') {
-            const rawUsage = await adapter.getUsageLimits();
+            const rawUsage = await adapter.getUsageLimits(options);
             return formatAntigravityUsage(rawUsage);
         } else if (adapter.antigravityApiService && typeof adapter.antigravityApiService.getUsageLimits === 'function') {
-            const rawUsage = await adapter.antigravityApiService.getUsageLimits();
+            const rawUsage = await adapter.antigravityApiService.getUsageLimits(options);
             return formatAntigravityUsage(rawUsage);
         }
         throw new Error('This adapter does not support usage query');
@@ -1229,10 +1263,10 @@ async function getAdapterUsage(adapter, providerType) {
 
     if (providerType === 'openai-codex-oauth') {
         if (typeof adapter.getUsageLimits === 'function') {
-            const rawUsage = await adapter.getUsageLimits();
+            const rawUsage = await adapter.getUsageLimits(options);
             return formatCodexUsage(rawUsage);
         } else if (adapter.codexApiService && typeof adapter.codexApiService.getUsageLimits === 'function') {
-            const rawUsage = await adapter.codexApiService.getUsageLimits();
+            const rawUsage = await adapter.codexApiService.getUsageLimits(options);
             return formatCodexUsage(rawUsage);
         }
         throw new Error('This adapter does not support usage query');
@@ -1240,7 +1274,7 @@ async function getAdapterUsage(adapter, providerType) {
 
     if (providerType === 'grok-custom') {
         if (typeof adapter.getUsageLimits === 'function') {
-            const rawUsage = await adapter.getUsageLimits();
+            const rawUsage = await adapter.getUsageLimits(options);
             return formatGrokUsage(rawUsage);
         }
         throw new Error('This adapter does not support usage query');

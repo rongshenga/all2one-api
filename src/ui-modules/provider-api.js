@@ -6,6 +6,7 @@ import { generateUUID, createProviderConfig, formatSystemPath, detectProviderFro
 import { broadcastEvent } from './event-broadcast.js';
 import { getRegisteredProviders } from '../providers/adapter.js';
 import {
+    getRuntimeStorage,
     loadProviderPoolsCompatSnapshot,
     replaceProviderPoolsCompatSnapshot
 } from '../storage/runtime-storage-registry.js';
@@ -45,6 +46,38 @@ async function loadProviderPools(currentConfig, providerPoolManager) {
     }
 
     return {};
+}
+
+async function loadProviderPoolSummaries(currentConfig, providerPoolManager) {
+    const runtimeBackend = currentConfig?.RUNTIME_STORAGE_INFO?.backend;
+    const shouldUseRuntimeSummary = runtimeBackend === 'db' || runtimeBackend === 'dual-write';
+
+    if (shouldUseRuntimeSummary) {
+        try {
+            const runtimeStorage = getRuntimeStorage();
+            const providerDomain = runtimeStorage?.provider || null;
+            const summaryLoader = providerDomain?.loadPoolsSummary
+                || runtimeStorage?.loadProviderPoolsSummary
+                || runtimeStorage?.rawStorage?.loadProviderPoolsSummary;
+            if (typeof summaryLoader === 'function') {
+                const summaries = await summaryLoader.call(providerDomain || runtimeStorage, {
+                    filePath: getProviderPoolsFilePath(currentConfig),
+                    autoImportFromFile: currentConfig?.RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS !== false
+                });
+                if (summaries && Object.keys(summaries).length > 0) {
+                    return summaries;
+                }
+            }
+        } catch (error) {
+            logger.warn('[UI API] Failed to load provider summaries from runtime storage:', error.message);
+        }
+    }
+
+    const providerPools = await loadProviderPools(currentConfig, providerPoolManager);
+    return Object.entries(providerPools).reduce((summaries, [providerType, providers]) => {
+        summaries[providerType] = buildProviderSummary(providers);
+        return summaries;
+    }, {});
 }
 
 async function persistProviderPools(currentConfig, providerPoolManager, providerPools, options = {}) {
@@ -287,11 +320,7 @@ export async function handleGetProviders(req, res, currentConfig, providerPoolMa
  * 获取提供商池摘要
  */
 export async function handleGetProvidersSummary(req, res, currentConfig, providerPoolManager) {
-    const providerPools = await loadProviderPools(currentConfig, providerPoolManager);
-    const providerSummaries = Object.entries(providerPools).reduce((summaries, [providerType, providers]) => {
-        summaries[providerType] = buildProviderSummary(providers);
-        return summaries;
-    }, {});
+    const providerSummaries = await loadProviderPoolSummaries(currentConfig, providerPoolManager);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(providerSummaries));

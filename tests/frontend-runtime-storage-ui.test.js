@@ -652,6 +652,143 @@ describe('frontend event stream and usage manager', () => {
         expect(usageLoading.style.display).toBe('none');
         expect(serverTimeValue.textContent).toBeTruthy();
     });
+
+    test('should invalidate and reload expanded provider details after provider refresh', async () => {
+        const originalCreateElement = global.document.createElement;
+        global.document.createElement = jest.fn(() => createTreeElement());
+        usageSection.classList.add('active');
+
+        let usageFetchCount = 0;
+        let taskStatusPollCount = 0;
+        global.fetch = jest.fn(async (url) => {
+            fetchCalls.push(String(url));
+
+            if (String(url) === '/api/usage') {
+                usageFetchCount += 1;
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => ({
+                        providers: {
+                            'gemini-cli-oauth': {
+                                totalCount: 1,
+                                successCount: 1,
+                                errorCount: 0,
+                                processedCount: 1,
+                                instances: []
+                            }
+                        },
+                        timestamp: `2026-03-06T10:00:0${usageFetchCount}.000Z`,
+                        serverTime: '2026-03-06T10:00:10.000Z'
+                    })
+                };
+            }
+
+            if (String(url) === '/api/usage/gemini-cli-oauth?refresh=true&async=true') {
+                return {
+                    ok: true,
+                    status: 202,
+                    statusText: 'Accepted',
+                    json: async () => ({
+                        taskId: 'provider-task-1',
+                        pollIntervalMs: 1
+                    })
+                };
+            }
+
+            if (String(url) === '/api/usage/tasks/provider-task-1') {
+                taskStatusPollCount += 1;
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => taskStatusPollCount === 1
+                        ? {
+                            status: 'running',
+                            providerType: 'gemini-cli-oauth',
+                            pollIntervalMs: 1,
+                            progress: {
+                                currentProvider: 'gemini-cli-oauth',
+                                processedInstances: 1,
+                                totalInstances: 1,
+                                percent: 100
+                            }
+                        }
+                        : {
+                            status: 'completed',
+                            providerType: 'gemini-cli-oauth'
+                        }
+                };
+            }
+
+            if (String(url) === '/api/usage/gemini-cli-oauth') {
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => ({
+                        totalCount: 1,
+                        successCount: 1,
+                        errorCount: 0,
+                        processedCount: 1,
+                        timestamp: '2026-03-06T10:00:20.000Z',
+                        instances: [
+                            {
+                                uuid: 'gemini-1',
+                                name: 'Gemini Account 1',
+                                success: true,
+                                isHealthy: true,
+                                isDisabled: false,
+                                usage: {
+                                    usageBreakdown: [],
+                                    user: {},
+                                    subscription: {}
+                                }
+                            }
+                        ]
+                    })
+                };
+            }
+
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+
+        await usageManagerModule.loadUsage();
+
+        const initialGroup = usageContent.children[0];
+        initialGroup.classList.remove('collapsed');
+        initialGroup.dataset.detailsLoaded = 'true';
+        initialGroup.__usageProviderData = {
+            providerType: 'gemini-cli-oauth',
+            totalCount: 1,
+            successCount: 1,
+            errorCount: 0,
+            processedCount: 1,
+            detailsLoaded: true,
+            instances: [
+                {
+                    uuid: 'stale-gemini-1',
+                    name: 'Stale Gemini Account',
+                    success: true,
+                    usage: {
+                        usageBreakdown: []
+                    }
+                }
+            ]
+        };
+
+        await usageManagerModule.refreshProviderUsage('gemini-cli-oauth');
+
+        expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth');
+        expect(fetchCalls.filter((url) => url === '/api/usage')).toHaveLength(2);
+
+        const refreshedGroup = usageContent.children[0];
+        expect(refreshedGroup.classList.contains('collapsed')).toBe(false);
+        expect(refreshedGroup.dataset.detailsLoaded).toBe('true');
+
+        global.document.createElement = originalCreateElement;
+    });
 });
 
 describe('frontend runtime storage diagnostics panel', () => {

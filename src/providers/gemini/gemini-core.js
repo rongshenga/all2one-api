@@ -752,7 +752,7 @@ export class GeminiApiService {
      * 获取模型配额信息
      * @returns {Promise<Object>} 模型配额信息
      */
-    async getUsageLimits() {
+    async getUsageLimits(options = {}) {
         if (!this.isInitialized) await this.initialize();
         
         // 注意：V2 架构下不再在 getUsageLimits 中同步刷新 token
@@ -763,7 +763,7 @@ export class GeminiApiService {
         // }
 
         try {
-            const modelsWithQuotas = await this.getModelsWithQuotas();
+            const modelsWithQuotas = await this.getModelsWithQuotas(options);
             return modelsWithQuotas;
         } catch (error) {
             logger.error('[Gemini] Failed to get usage limits:', error.message);
@@ -775,7 +775,7 @@ export class GeminiApiService {
      * 获取带配额信息的模型列表
      * @returns {Promise<Object>} 模型配额信息
      */
-    async getModelsWithQuotas() {
+    async getModelsWithQuotas(options = {}) {
         try {
             // 解析模型配额信息
             const result = {
@@ -798,6 +798,16 @@ export class GeminiApiService {
                     responseType: 'json',
                     body: JSON.stringify(requestBody)
                 };
+
+                const requestTimeoutMs = Number.isFinite(Number(options?.timeoutMs)) && Number(options.timeoutMs) > 0
+                    ? Number(options.timeoutMs)
+                    : null;
+                if (requestTimeoutMs) {
+                    requestOptions.timeout = requestTimeoutMs;
+                }
+                if (options?.signal) {
+                    requestOptions.signal = options.signal;
+                }
 
                 const res = await this.authClient.request(requestOptions);
                 // logger.info(`[Gemini] retrieveUserQuota success`, JSON.stringify(res.data));

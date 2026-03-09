@@ -7,6 +7,10 @@ const mockLogger = {
     error: jest.fn()
 };
 
+const mockLoadProviderPoolsCompatSnapshot = jest.fn();
+const mockReplaceProviderPoolsCompatSnapshot = jest.fn();
+const mockGetRuntimeStorage = jest.fn(() => null);
+
 let handleGetProvidersSummary;
 let handleGetProviderType;
 
@@ -38,6 +42,12 @@ describe('Provider API Summary', () => {
             getRegisteredProviders: jest.fn(() => [])
         }));
 
+        jest.doMock('../src/storage/runtime-storage-registry.js', () => ({
+            getRuntimeStorage: mockGetRuntimeStorage,
+            loadProviderPoolsCompatSnapshot: mockLoadProviderPoolsCompatSnapshot,
+            replaceProviderPoolsCompatSnapshot: mockReplaceProviderPoolsCompatSnapshot
+        }));
+
         const providerApiModule = await import('../src/ui-modules/provider-api.js');
         handleGetProvidersSummary = providerApiModule.handleGetProvidersSummary;
         handleGetProviderType = providerApiModule.handleGetProviderType;
@@ -48,6 +58,12 @@ describe('Provider API Summary', () => {
         mockLogger.debug.mockClear();
         mockLogger.warn.mockClear();
         mockLogger.error.mockClear();
+        mockLoadProviderPoolsCompatSnapshot.mockReset();
+        mockLoadProviderPoolsCompatSnapshot.mockResolvedValue({});
+        mockReplaceProviderPoolsCompatSnapshot.mockReset();
+        mockReplaceProviderPoolsCompatSnapshot.mockImplementation(async (config, providerPools) => providerPools);
+        mockGetRuntimeStorage.mockReset();
+        mockGetRuntimeStorage.mockReturnValue(null);
     });
 
     test('should return compact provider summaries for list page', async () => {
@@ -83,6 +99,56 @@ describe('Provider API Summary', () => {
                 healthyCount: 0,
                 usageCount: 3,
                 errorCount: 4
+            }
+        });
+    });
+
+    test('should read provider summaries directly from runtime storage in db mode', async () => {
+        const req = {};
+        const res = createMockRes();
+        const currentConfig = {
+            RUNTIME_STORAGE_INFO: {
+                backend: 'db'
+            },
+            PROVIDER_POOLS_FILE_PATH: 'configs/provider_pools.json'
+        };
+        const providerPoolManager = {
+            providerPools: {
+                'openai-codex-oauth': [
+                    { uuid: 'stale-1', isHealthy: false, isDisabled: false, usageCount: 999, errorCount: 999 }
+                ]
+            }
+        };
+        const loadPoolsSummary = jest.fn(async () => ({
+            'openai-codex-oauth': {
+                totalCount: 2,
+                healthyCount: 1,
+                usageCount: 15,
+                errorCount: 3
+            }
+        }));
+        mockGetRuntimeStorage.mockReturnValue({
+            provider: {
+                loadPoolsSummary
+            }
+        });
+
+        const handled = await handleGetProvidersSummary(req, res, currentConfig, providerPoolManager);
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+        expect(loadPoolsSummary).toHaveBeenCalledWith(expect.objectContaining({
+            filePath: 'configs/provider_pools.json',
+            autoImportFromFile: true
+        }));
+        expect(mockLoadProviderPoolsCompatSnapshot).not.toHaveBeenCalled();
+
+        const payload = JSON.parse(res.body);
+        expect(payload).toEqual({
+            'openai-codex-oauth': {
+                totalCount: 2,
+                healthyCount: 1,
+                usageCount: 15,
+                errorCount: 3
             }
         });
     });

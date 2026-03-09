@@ -186,6 +186,33 @@ function getUsageStorage() {
     return runtimeStorage;
 }
 
+function getRuntimeStorageBackend(runtimeStorage = null) {
+    const storage = runtimeStorage || getRuntimeStorage();
+    if (!storage) {
+        return null;
+    }
+
+    try {
+        const info = typeof storage.getInfo === 'function' ? storage.getInfo() : null;
+        if (info?.backend && typeof info.backend === 'string') {
+            return info.backend.toLowerCase();
+        }
+    } catch {
+        // ignore
+    }
+
+    if (storage.kind && typeof storage.kind === 'string') {
+        return storage.kind.toLowerCase();
+    }
+
+    return null;
+}
+
+function shouldDisableUsageFileFallback(runtimeStorage = null) {
+    const backend = getRuntimeStorageBackend(runtimeStorage);
+    return backend === 'db' || backend === 'dual-write';
+}
+
 export async function readUsageCache(options = {}) {
     const runtimeReadTimeoutMs = Number.isFinite(Number(options.runtimeReadTimeoutMs)) && Number(options.runtimeReadTimeoutMs) > 0
         ? Number(options.runtimeReadTimeoutMs)
@@ -226,6 +253,13 @@ export async function readUsageCache(options = {}) {
                 code: error.code || null,
                 timeoutMs: error.timeoutMs || runtimeReadTimeoutMs
             });
+            if (shouldDisableUsageFileFallback(runtimeStorage)) {
+                logUsageCacheLifecycle(lifecycleLoggingEnabled, 'Runtime storage usage cache fallback disabled', {
+                    debugLabel,
+                    backend: getRuntimeStorageBackend(runtimeStorage)
+                });
+                return null;
+            }
         }
     }
 
@@ -307,8 +341,14 @@ export async function readProviderUsageCache(providerType) {
                     fromCache: true
                 };
             }
+            if (shouldDisableUsageFileFallback(runtimeStorage)) {
+                return null;
+            }
         } catch (error) {
             logger.warn(`[Usage Cache] Failed to read provider usage cache from runtime storage for ${providerType}:`, error.message);
+            if (shouldDisableUsageFileFallback(runtimeStorage)) {
+                return null;
+            }
         }
     }
 

@@ -117,4 +117,52 @@ describe('FileRuntimeStorage temp file handling', () => {
         expect(await secondaryStorage.loadProviderPoolsSnapshot()).toEqual(expectedSnapshots.at(-1));
         expect(await listProviderPoolTempFiles(providerPoolsPath)).toEqual([]);
     });
+
+    test('should accept API_POTLUCK path aliases when persisting potluck stores', async () => {
+        const tempDir = await createTempDir('file-runtime-storage-potluck-alias-');
+        const potluckDataPath = path.join(tempDir, 'custom-potluck-data.json');
+        const potluckKeysPath = path.join(tempDir, 'custom-potluck-keys.json');
+        const storage = new FileRuntimeStorage({
+            API_POTLUCK_DATA_FILE_PATH: potluckDataPath,
+            API_POTLUCK_KEYS_FILE_PATH: potluckKeysPath
+        });
+
+        await storage.initialize();
+        await storage.savePotluckUserData({
+            config: {
+                defaultDailyLimit: 888
+            },
+            users: {}
+        });
+        await storage.savePotluckKeyStore({
+            keys: {
+                alias_key: {
+                    id: 'alias_key',
+                    name: 'Alias Key',
+                    createdAt: '2026-03-06T10:00:00.000Z',
+                    dailyLimit: 888,
+                    todayUsage: 0,
+                    totalUsage: 0,
+                    lastResetDate: '2026-03-06',
+                    enabled: true,
+                    bonusRemaining: 0
+                }
+            }
+        });
+
+        expect(await fs.readFile(potluckDataPath, 'utf8')).toContain('"defaultDailyLimit": 888');
+        expect(await fs.readFile(potluckKeysPath, 'utf8')).toContain('"alias_key"');
+        expect(await storage.loadPotluckUserData()).toMatchObject({
+            config: {
+                defaultDailyLimit: 888
+            }
+        });
+        expect(await storage.loadPotluckKeyStore()).toMatchObject({
+            keys: {
+                alias_key: expect.objectContaining({
+                    dailyLimit: 888
+                })
+            }
+        });
+    });
 });

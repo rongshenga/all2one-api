@@ -739,6 +739,41 @@ WHERE meta_key = 'schema_version';
         expect(exportedUsageCache.providers).toEqual(fixture.sourceUsageCache.providers);
     });
 
+    test('should read potluck source files from POTLUCK_* aliases during migration', async () => {
+        const fixture = await createRuntimeMigrationFixture('runtime-storage-potluck-alias-');
+        const aliasConfig = {
+            ...fixture.config,
+            POTLUCK_USER_DATA_FILE_PATH: fixture.apiPotluckDataPath,
+            POTLUCK_KEYS_FILE_PATH: fixture.apiPotluckKeysPath
+        };
+        delete aliasConfig.API_POTLUCK_DATA_FILE_PATH;
+        delete aliasConfig.API_POTLUCK_KEYS_FILE_PATH;
+
+        const result = await migrateLegacyRuntimeStorage(aliasConfig, {
+            execute: true,
+            force: true
+        });
+
+        expect(result.report.overallStatus).toBe('pass');
+
+        const storage = new SqliteRuntimeStorage(aliasConfig);
+        await storage.initialize();
+        expect(await storage.loadPotluckUserData()).toMatchObject(fixture.sourceApiPotluckData);
+        const restoredKeyStore = await storage.loadPotluckKeyStore();
+        expect(restoredKeyStore).toMatchObject({
+            keys: {
+                fixture_key: expect.objectContaining({
+                    id: 'fixture_key',
+                    name: fixture.sourceApiPotluckKeys.keys.fixture_key.name,
+                    dailyLimit: fixture.sourceApiPotluckKeys.keys.fixture_key.dailyLimit,
+                    todayUsage: fixture.sourceApiPotluckKeys.keys.fixture_key.todayUsage,
+                    enabled: fixture.sourceApiPotluckKeys.keys.fixture_key.enabled
+                })
+            }
+        });
+        await storage.close();
+    });
+
     test('should throw diff report when failOnDiff detects mismatched source bundle', async () => {
         const tempDir = await createTempDir('runtime-storage-verify-fail-');
         const dbPath = path.join(tempDir, 'runtime.sqlite');

@@ -1320,6 +1320,14 @@ async function readJsonFileSafe(filePath, fallbackValue = null) {
     }
 }
 
+const LEGACY_IMPORT_MARKERS = Object.freeze({
+    providerPools: 'legacy_import_provider_pools',
+    usageCache: 'legacy_import_usage_cache',
+    adminSessions: 'legacy_import_admin_sessions',
+    potluckUserData: 'legacy_import_potluck_user_data',
+    potluckKeyStore: 'legacy_import_potluck_key_store'
+});
+
 
 export class SqliteRuntimeStorage {
     constructor(config = {}) {
@@ -1390,14 +1398,21 @@ ON CONFLICT(meta_key) DO UPDATE SET
         const hasData = await this.hasProviderData();
         const autoImportFromFile = options.autoImportFromFile !== false;
         const importFilePath = options.filePath || this.filePath;
+        const importMarkerKey = LEGACY_IMPORT_MARKERS.providerPools;
 
-        if (!hasData && autoImportFromFile && importFilePath && fs.existsSync(importFilePath)) {
-            const snapshot = await this.fileStorage.loadProviderPoolsSnapshot();
-            if (Object.keys(snapshot).length > 0) {
-                await this.replaceProviderPoolsSnapshot(snapshot, {
-                    sourceKind: 'provider_pools_json'
-                });
-                logger.info(`[RuntimeStorage:db] Seeded provider pools from ${importFilePath}`);
+        if (hasData) {
+            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
+        } else if (autoImportFromFile && importFilePath && fs.existsSync(importFilePath)) {
+            const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
+            if (!legacyImportMarked) {
+                const snapshot = await this.fileStorage.loadProviderPoolsSnapshot();
+                if (Object.keys(snapshot).length > 0) {
+                    await this.replaceProviderPoolsSnapshot(snapshot, {
+                        sourceKind: 'provider_pools_json'
+                    });
+                    await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
+                    logger.info(`[RuntimeStorage:db] Seeded provider pools from ${importFilePath}`);
+                }
             }
         }
 
@@ -1408,6 +1423,59 @@ ON CONFLICT(meta_key) DO UPDATE SET
                 this.startupRestorePageSize
             )
         });
+    }
+
+    async loadProviderPoolsSummary(options = {}) {
+        await this.initialize();
+
+        const hasData = await this.hasProviderData();
+        const autoImportFromFile = options.autoImportFromFile !== false;
+        const importFilePath = options.filePath || this.filePath;
+        const importMarkerKey = LEGACY_IMPORT_MARKERS.providerPools;
+
+        if (hasData) {
+            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
+        } else if (autoImportFromFile && importFilePath && fs.existsSync(importFilePath)) {
+            const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
+            if (!legacyImportMarked) {
+                const snapshot = await this.fileStorage.loadProviderPoolsSnapshot();
+                if (Object.keys(snapshot).length > 0) {
+                    await this.replaceProviderPoolsSnapshot(snapshot, {
+                        sourceKind: 'provider_pools_json'
+                    });
+                    await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
+                    logger.info(`[RuntimeStorage:db] Seeded provider pools from ${importFilePath}`);
+                }
+            }
+        }
+
+        const rows = await this.client.query(`
+SELECT
+    r.provider_type,
+    COUNT(*) AS total_count,
+    SUM(CASE WHEN COALESCE(s.is_healthy, 1) = 1 AND COALESCE(s.is_disabled, 0) = 0 THEN 1 ELSE 0 END) AS healthy_count,
+    SUM(COALESCE(s.usage_count, 0)) AS usage_count,
+    SUM(COALESCE(s.error_count, 0)) AS error_count
+FROM provider_registrations r
+LEFT JOIN provider_runtime_state s
+    ON s.provider_id = r.provider_id
+GROUP BY r.provider_type
+ORDER BY r.provider_type ASC;
+        `);
+
+        return rows.reduce((summaries, row) => {
+            const providerType = row.provider_type || row.providerType;
+            if (!providerType) {
+                return summaries;
+            }
+            summaries[providerType] = {
+                totalCount: Number(row.total_count || 0),
+                healthyCount: Number(row.healthy_count || 0),
+                usageCount: Number(row.usage_count || 0),
+                errorCount: Number(row.error_count || 0)
+            };
+            return summaries;
+        }, {});
     }
 
     async exportProviderPoolsSnapshot(options = {}) {
@@ -2500,6 +2568,48 @@ WHERE processed_count IS NULL OR processed_count = 0;
         }
     }
 
+    async #hasLegacyImportMarker(markerKey) {
+        if (!markerKey) {
+            return false;
+        }
+
+        const rows = await this.client.query(`
+SELECT meta_key
+FROM runtime_storage_meta
+WHERE meta_key = ${sqlValue(markerKey)}
+LIMIT 1;
+        `);
+        return rows.length > 0;
+    }
+
+    async #setLegacyImportMarker(markerKey, markerValue = '1') {
+        if (!markerKey) {
+            return;
+        }
+
+        await this.client.exec(`
+INSERT INTO runtime_storage_meta (meta_key, meta_value, updated_at)
+VALUES (
+    ${sqlValue(markerKey)},
+    ${sqlValue(markerValue)},
+    ${sqlValue(nowIso())}
+)
+ON CONFLICT(meta_key) DO UPDATE SET
+    meta_value = excluded.meta_value,
+    updated_at = excluded.updated_at;
+        `);
+    }
+
+    async #ensureLegacyImportMarker(markerKey, markerValue = '1') {
+        const markerExists = await this.#hasLegacyImportMarker(markerKey);
+        if (markerExists) {
+            return false;
+        }
+
+        await this.#setLegacyImportMarker(markerKey, markerValue);
+        return true;
+    }
+
     async #ensureUsageCacheSeeded() {
         const countRows = await this.client.query(`
 SELECT COUNT(*) AS count
@@ -2507,13 +2617,21 @@ FROM usage_snapshots
 WHERE provider_id IS NULL;
         `);
         const snapshotCount = Number(countRows[0]?.count || 0);
+        const importMarkerKey = LEGACY_IMPORT_MARKERS.usageCache;
         if (snapshotCount > 0) {
+            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
             return snapshotCount;
+        }
+
+        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
+        if (legacyImportMarked) {
+            return 0;
         }
 
         const legacyCache = await this.fileStorage.loadUsageCacheSnapshot();
         if (legacyCache?.providers && Object.keys(legacyCache.providers).length > 0) {
             await this.replaceUsageCacheSnapshot(legacyCache);
+            await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
             logger.info('[RuntimeStorage:db] Imported legacy usage cache into sqlite runtime storage');
             return Object.keys(legacyCache.providers).length;
         }
@@ -3137,7 +3255,14 @@ ON CONFLICT(scope, key) DO UPDATE SET
 
     async #importLegacyAdminSessionsIfNeeded() {
         const countRows = await this.client.query('SELECT COUNT(*) AS count FROM admin_sessions;');
+        const importMarkerKey = LEGACY_IMPORT_MARKERS.adminSessions;
         if (Number(countRows[0]?.count || 0) > 0) {
+            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
+            return;
+        }
+
+        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
+        if (legacyImportMarked) {
             return;
         }
 
@@ -3179,13 +3304,21 @@ INSERT INTO admin_sessions (
         }
         statements.push('COMMIT;');
         await this.client.exec(statements.join('\n'));
+        await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
         logger.info('[RuntimeStorage:db] Imported legacy admin sessions into sqlite runtime storage');
     }
 
     async #importLegacyPotluckUserDataIfNeeded() {
         const userCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_users;');
         const configCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_config;');
+        const importMarkerKey = LEGACY_IMPORT_MARKERS.potluckUserData;
         if (Number(userCountRows[0]?.count || 0) > 0 || Number(configCountRows[0]?.count || 0) > 0) {
+            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
+            return;
+        }
+
+        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
+        if (legacyImportMarked) {
             return;
         }
 
@@ -3195,12 +3328,20 @@ INSERT INTO admin_sessions (
         }
 
         await this.savePotluckUserData(legacyStore);
+        await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
         logger.info('[RuntimeStorage:db] Imported legacy API Potluck user data into sqlite runtime storage');
     }
 
     async #importLegacyPotluckKeyStoreIfNeeded() {
         const keyCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_api_keys;');
+        const importMarkerKey = LEGACY_IMPORT_MARKERS.potluckKeyStore;
         if (Number(keyCountRows[0]?.count || 0) > 0) {
+            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
+            return;
+        }
+
+        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
+        if (legacyImportMarked) {
             return;
         }
 
@@ -3210,6 +3351,7 @@ INSERT INTO admin_sessions (
         }
 
         await this.savePotluckKeyStore(legacyStore);
+        await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
         logger.info('[RuntimeStorage:db] Imported legacy API Potluck key store into sqlite runtime storage');
     }
 
@@ -3832,6 +3974,7 @@ const SQLITE_STORAGE_OPERATION_META = {
     initialize: { phase: 'initialize', domain: 'runtime_storage' },
     hasProviderData: { phase: 'read', domain: 'provider' },
     loadProviderPoolsSnapshot: { phase: 'read', domain: 'provider' },
+    loadProviderPoolsSummary: { phase: 'read', domain: 'provider' },
     exportProviderPoolsSnapshot: { phase: 'export', domain: 'provider' },
     replaceProviderPoolsSnapshot: { phase: 'write', domain: 'provider' },
     findCredentialAsset: { phase: 'read', domain: 'provider' },
