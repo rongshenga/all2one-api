@@ -11,6 +11,7 @@ echo
 
 # 处理参数
 FORCE_PULL=0
+APP_PORT="${SERVER_PORT:-3123}"
 
 for arg in "$@"; do
     if [ "$arg" == "--pull" ]; then
@@ -97,10 +98,10 @@ echo "========================================"
 echo "  启动AIClient2API服务器..."
 echo "========================================"
 echo
-echo "服务器将在 http://localhost:3000 启动"
-echo "访问 http://localhost:3000 查看管理界面"
+echo "服务器将在 http://localhost:${APP_PORT} 启动"
+echo "访问 http://localhost:${APP_PORT} 查看管理界面"
 echo "按 Ctrl+C 停止服务器"
 echo
 
 # 启动服务器
-node src/core/master.js
+node src/core/master.js --port "${APP_PORT}"

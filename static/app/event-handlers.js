@@ -4,7 +4,6 @@ import { elements, autoScroll, setAutoScroll, clearLogs } from './constants.js';
 import { showToast } from './utils.js';
 import { fileUploadHandler } from './file-upload.js';
 import { t } from './i18n.js';
-import { checkUpdate, performUpdate } from './provider-manager.js';
 
 /**
  * 初始化所有事件监听器
@@ -189,18 +188,6 @@ function initEventListeners() {
     // if (providerPoolsInput) {
     //     providerPoolsInput.addEventListener('input', handleProviderPoolsConfigChange);
     // }
-
-    // 检查更新按钮
-    const checkUpdateBtn = document.getElementById('checkUpdateBtn');
-    if (checkUpdateBtn) {
-        checkUpdateBtn.addEventListener('click', () => checkUpdate(false));
-    }
-
-    // 执行更新按钮
-    const performUpdateBtn = document.getElementById('performUpdateBtn');
-    if (performUpdateBtn) {
-        performUpdateBtn.addEventListener('click', performUpdate);
-    }
 
     // 日志容器滚动
     if (elements.logsContainer) {

@@ -10,7 +10,6 @@ import * as usageApi from '../ui-modules/usage-api.js';
 import * as pluginApi from '../ui-modules/plugin-api.js';
 import * as uploadConfigApi from '../ui-modules/upload-config-api.js';
 import * as systemApi from '../ui-modules/system-api.js';
-import * as updateApi from '../ui-modules/update-api.js';
 import * as oauthApi from '../ui-modules/oauth-api.js';
 import * as eventBroadcast from '../ui-modules/event-broadcast.js';
 
@@ -394,16 +393,6 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     if (method === 'GET' && usageProviderMatch) {
         const providerType = decodeURIComponent(usageProviderMatch[1]);
         return await usageApi.handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
-    }
-
-    // Check for updates - compare local VERSION with latest git tag
-    if (method === 'GET' && pathParam === '/api/check-update') {
-        return await updateApi.handleCheckUpdate(req, res);
-    }
-
-    // Perform update - git fetch and checkout to latest tag
-    if (method === 'POST' && pathParam === '/api/update') {
-        return await updateApi.handlePerformUpdate(req, res);
     }
 
     // Reload configuration files
