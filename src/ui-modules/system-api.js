@@ -71,10 +71,7 @@ async function loadProviderSummaryFromRuntimeStorage(runtimeStorageSnapshot, con
     }
 
     try {
-        const summaries = await summaryLoader.call(providerDomain || runtimeStorage, {
-            filePath: config?.PROVIDER_POOLS_FILE_PATH,
-            autoImportFromFile: config?.RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS !== false
-        });
+        const summaries = await summaryLoader.call(providerDomain || runtimeStorage);
         if (!summaries || typeof summaries !== 'object' || Object.keys(summaries).length === 0) {
             return null;
         }

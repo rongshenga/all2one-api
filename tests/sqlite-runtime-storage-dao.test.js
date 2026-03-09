@@ -148,10 +148,7 @@ describe('SqliteRuntimeStorage DAO SQL', () => {
     });
 
     test('should skip delete transaction when no expired admin sessions exist', async () => {
-        mockClient.query
-            .mockResolvedValueOnce([{ count: 1 }])
-            .mockResolvedValueOnce([{ meta_key: 'legacy_import_admin_sessions' }])
-            .mockResolvedValueOnce([]);
+        mockClient.query.mockResolvedValueOnce([]);
 
         await expect(storage.cleanupExpiredAdminSessions()).resolves.toEqual({
             deletedCount: 0
@@ -192,8 +189,6 @@ describe('SqliteRuntimeStorage DAO SQL', () => {
     test('should skip synchronous last_seen write for recently seen admin sessions', async () => {
         const now = new Date().toISOString();
         mockClient.query
-            .mockResolvedValueOnce([{ count: 1 }])
-            .mockResolvedValueOnce([{ meta_key: 'legacy_import_admin_sessions' }])
             .mockResolvedValueOnce([
                 {
                     id: 'session-token-1',
@@ -367,7 +362,6 @@ test('should surface transactional exec failures without masking commit errors',
     test('should page provider usage snapshot queries in sqlite storage', async () => {
         mockClient.query
             .mockResolvedValueOnce([{ count: 1 }])
-            .mockResolvedValueOnce([{ meta_key: 'legacy_import_usage_cache' }])
             .mockResolvedValueOnce([
                 {
                     id: 'usage_openai-codex-oauth_all',
@@ -423,8 +417,8 @@ test('should surface transactional exec failures without masking commit errors',
             name: 'Codex 101',
             success: true
         });
-        expect(mockClient.query.mock.calls[2][0]).toContain('NULL AS payload_json');
-        expect(mockClient.query.mock.calls[3][0]).toContain('LIMIT 100 OFFSET 100');
+        expect(mockClient.query.mock.calls[1][0]).toContain('NULL AS payload_json');
+        expect(mockClient.query.mock.calls[2][0]).toContain('LIMIT 100 OFFSET 100');
     });
 
 test('should fail fast before issuing SQL when potluck payload serialization throws', async () => {

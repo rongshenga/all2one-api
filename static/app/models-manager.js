@@ -15,6 +15,13 @@ let currentProviderConfigs = null;
 const modelSimulationState = new Map();
 let simulationRunning = false;
 let requiredApiKeyCache = null;
+const PROVIDER_SIMULATION_CONCURRENCY = 3;
+let activeSimulationProviderType = null;
+
+function tt(key, fallback) {
+    const value = t(key);
+    return value && value !== key ? value : fallback;
+}
 
 /**
  * 更新提供商配置
@@ -113,6 +120,31 @@ function showCopyToast(modelName) {
     }, 2000);
 }
 
+function showModelsToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toastContainer');
+    if (!toastContainer) return;
+
+    const iconMap = {
+        info: 'fa-circle-info',
+        success: 'fa-check-circle',
+        error: 'fa-circle-exclamation',
+        warning: 'fa-triangle-exclamation'
+    };
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <i class="fas ${iconMap[type] || iconMap.info}"></i>
+        <span>${escapeHtml(message)}</span>
+    `;
+
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('toast-fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 2600);
+}
+
 /**
  * 渲染模型列表
  * @param {Object} models - 模型数据
@@ -157,29 +189,38 @@ function renderModelsList(models) {
                         <h3>${providerDisplayName}</h3>
                         <span class="provider-models-count">${modelList.length}</span>
                     </div>
-                    <div class="provider-models-toggle">
+                    <div class="provider-models-header-actions">
+                        ${canRunSimulationForProvider(providerType) ? `
+                            <button
+                                class="provider-models-test-btn"
+                                data-provider="${escapeHtml(providerType)}"
+                                type="button"
+                                onclick="window.simulateProviderModelsRequest('${escapeJsString(providerType)}', event)"
+                                title="${tt('models.simulateProvider', '校验此分组全部模型')}">
+                                <i class="${getProviderSimulationButtonIcon(providerType)}"></i>
+                            </button>
+                        ` : ''}
+                        <div class="provider-models-toggle">
                         <i class="fas fa-chevron-down"></i>
+                        </div>
                     </div>
                 </div>
                 <div class="provider-models-content" id="models-${providerType}">
                     ${modelList.map(model => `
                         <div class="model-item ${getModelStateClass(providerType, model)}"
-                            onclick="window.copyModelName('${escapeJsString(model)}', this)"
-                            title="${escapeHtml(getModelItemTitle(providerType, model))}">
+                            onclick="window.handleModelItemClick('${escapeJsString(providerType)}', '${escapeJsString(model)}', this, event)">
                             <div class="model-item-icon">
                                 <i class="fas fa-cube"></i>
                             </div>
                             <span class="model-item-name">${escapeHtml(model)}</span>
-                            <span class="model-item-status">${escapeHtml(getModelStatusText(providerType, model))}</span>
-                            <button class="model-item-test-btn"
-                                type="button"
-                                onclick="window.simulateSingleModelRequest('${escapeJsString(providerType)}', '${escapeJsString(model)}', event)"
-                                title="${t('models.simulateSingle') || '模拟请求'}">
-                                <i class="${getModelTestButtonIcon(providerType, model)}"></i>
-                            </button>
-                            <div class="model-item-copy">
-                                <i class="fas fa-copy"></i>
-                            </div>
+                            ${hasModelRequestRecord(providerType, model) ? `
+                                <button class="model-item-detail-btn"
+                                    type="button"
+                                    onclick="window.showModelRequestDetails('${escapeJsString(providerType)}', '${escapeJsString(model)}', event)"
+                                    title="${tt('models.requestDetail', '请求详情')}">
+                                    <i class="fas fa-circle-info"></i>
+                                </button>
+                            ` : ''}
                         </div>
                     `).join('')}
                 </div>
@@ -276,6 +317,10 @@ function getModelState(providerType, modelName) {
     return modelSimulationState.get(getModelStateKey(providerType, modelName)) || null;
 }
 
+function hasModelRequestRecord(providerType, modelName) {
+    return !!getModelState(providerType, modelName);
+}
+
 function setModelState(providerType, modelName, state) {
     modelSimulationState.set(getModelStateKey(providerType, modelName), state);
 }
@@ -289,36 +334,11 @@ function getModelStateClass(providerType, modelName) {
     return '';
 }
 
-function getModelStatusText(providerType, modelName) {
-    const state = getModelState(providerType, modelName);
-    if (!state || !state.status) return t('models.statusIdle') || '未校验';
-    if (state.status === 'loading') return t('models.statusLoading') || '检测中...';
-    if (state.status === 'success') return t('models.statusSuccess') || '可用';
-    if (state.status === 'failed') return t('models.statusFailed') || '失败';
-    return t('models.statusIdle') || '未校验';
-}
-
-function getModelTestButtonIcon(providerType, modelName) {
-    const state = getModelState(providerType, modelName);
-    if (!state || state.status !== 'loading') return 'fas fa-paper-plane';
-    return 'fas fa-spinner fa-spin';
-}
-
-function getModelItemTitle(providerType, modelName) {
-    const baseText = t('models.clickToCopy') || '点击复制';
-    const state = getModelState(providerType, modelName);
-    if (!state) return baseText;
-
-    const details = [];
-    if (state.endpoint) details.push(`Endpoint: ${state.endpoint}`);
-    if (state.method) details.push(`Method: ${state.method}`);
-    if (state.durationMs !== undefined) details.push(`Duration: ${state.durationMs}ms`);
-    if (state.httpStatus !== undefined) details.push(`HTTP: ${state.httpStatus}`);
-    if (state.errorMessage) details.push(`Error: ${state.errorMessage}`);
-    if (state.requestBody) details.push(`Body: ${state.requestBody}`);
-
-    if (details.length === 0) return baseText;
-    return `${baseText}\n${details.join('\n')}`;
+function getProviderSimulationButtonIcon(providerType) {
+    if (simulationRunning && activeSimulationProviderType === providerType) {
+        return 'fas fa-spinner fa-spin';
+    }
+    return 'fas fa-bolt';
 }
 
 function getModelRequestConfig(providerType, modelName) {
@@ -362,6 +382,13 @@ function getModelRequestConfig(providerType, modelName) {
     };
 }
 
+function canRunSimulationForProvider(providerType) {
+    if (!providerType || typeof providerType !== 'string') {
+        return false;
+    }
+    return /^(gemini|claude|openai|grok|forward)-/.test(providerType);
+}
+
 async function getRequiredApiKey() {
     if (requiredApiKeyCache !== null) {
         return requiredApiKeyCache;
@@ -386,18 +413,145 @@ async function parseResponseError(response) {
     }
 }
 
+function normalizeResponseBody(rawBody) {
+    if (rawBody === undefined || rawBody === null || rawBody === '') {
+        return '';
+    }
+    try {
+        const parsed = JSON.parse(rawBody);
+        return JSON.stringify(parsed, null, 2);
+    } catch {
+        return String(rawBody);
+    }
+}
+
+function buildDetailText(providerType, modelName, state = null) {
+    if (!state) {
+        return [
+            `Provider: ${providerType}`,
+            `Model: ${modelName}`,
+            'Status: no request history'
+        ].join('\n');
+    }
+
+    const requestHeaders = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ***'
+    };
+
+    const sections = [
+        `Provider: ${providerType}`,
+        `Model: ${modelName}`,
+        `Status: ${state.status || 'unknown'}`,
+        state.httpStatus !== undefined ? `HTTP Status: ${state.httpStatus}` : null,
+        state.durationMs !== undefined ? `Duration: ${state.durationMs}ms` : null,
+        state.endpoint ? `Endpoint: ${state.endpoint}` : null,
+        state.method ? `Method: ${state.method}` : null,
+        '',
+        '[Request Headers]',
+        JSON.stringify(requestHeaders, null, 2),
+        '',
+        '[Request Body]',
+        normalizeResponseBody(state.requestBody),
+        '',
+        '[Response Body]',
+        normalizeResponseBody(state.responseBody),
+        state.errorMessage ? '' : null,
+        state.errorMessage ? '[Error Message]' : null,
+        state.errorMessage || null
+    ].filter(item => item !== null);
+
+    return sections.join('\n');
+}
+
+function ensureModelDetailModal() {
+    let modal = document.getElementById('modelRequestDetailModal');
+    if (modal) {
+        return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'modelRequestDetailModal';
+    modal.className = 'model-detail-modal';
+    modal.innerHTML = `
+        <div class="model-detail-modal__backdrop" onclick="window.closeModelRequestDetails()"></div>
+        <div class="model-detail-modal__dialog" role="dialog" aria-modal="true" aria-label="Request Details">
+            <div class="model-detail-modal__header">
+                <h4>Request Details</h4>
+                <div class="model-detail-modal__actions">
+                    <button type="button" class="model-detail-modal__copy" onclick="window.copyModelRequestDetails()">Copy</button>
+                    <button type="button" class="model-detail-modal__close" onclick="window.closeModelRequestDetails()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <pre id="modelRequestDetailContent" class="model-detail-modal__content"></pre>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    return modal;
+}
+
+function openModelRequestDetails(content) {
+    const modal = ensureModelDetailModal();
+    const contentEl = modal.querySelector('#modelRequestDetailContent');
+    if (contentEl) {
+        contentEl.textContent = content;
+    }
+    modal.classList.add('visible');
+}
+
+function closeModelRequestDetails() {
+    const modal = document.getElementById('modelRequestDetailModal');
+    if (modal) {
+        modal.classList.remove('visible');
+    }
+}
+
+async function copyModelRequestDetails() {
+    const contentEl = document.getElementById('modelRequestDetailContent');
+    if (!contentEl) return;
+    await copyToClipboard(contentEl.textContent || '');
+}
+
 function updateSimulationButtonState() {
-    const allBtn = document.getElementById('simulateAllModelsBtn');
-    if (!allBtn) return;
+    const buttons = document.querySelectorAll('.provider-models-test-btn');
+    buttons.forEach((btn) => {
+        btn.disabled = simulationRunning;
+        const providerType = btn.getAttribute('data-provider');
+        const isActive = simulationRunning && activeSimulationProviderType && providerType === activeSimulationProviderType;
+        btn.classList.toggle('loading', isActive);
+    });
+}
 
-    allBtn.disabled = simulationRunning;
-    allBtn.classList.toggle('loading', simulationRunning);
+async function ensureServerReadyForSimulation() {
+    try {
+        const response = await fetch('/health');
+        const data = await response.json().catch(() => ({}));
+        const ready = data?.startup?.ready === true || data?.status === 'healthy';
+        if (ready) {
+            return true;
+        }
+        const phase = data?.startup?.phase ? ` (${data.startup.phase})` : '';
+        showModelsToast(`系统初始化中，请稍后再试${phase}`, 'warning');
+        return false;
+    } catch (error) {
+        showModelsToast('无法确认系统状态，请稍后再试', 'error');
+        return false;
+    }
+}
 
-    const textEl = allBtn.querySelector('span');
-    if (textEl) {
-        textEl.textContent = simulationRunning
-            ? (t('models.simulateAllRunning') || '模拟请求中...')
-            : (t('models.simulateAll') || '模拟请求校验全部模型');
+async function runProviderSimulation(providerType, fn) {
+    simulationRunning = true;
+    activeSimulationProviderType = providerType;
+    updateSimulationButtonState();
+    try {
+        await fn();
+    } finally {
+        simulationRunning = false;
+        activeSimulationProviderType = null;
+        updateSimulationButtonState();
     }
 }
 
@@ -428,16 +582,25 @@ async function simulateModelRequest(providerType, modelName) {
 
         const durationMs = Date.now() - startedAt;
         if (response.ok) {
+            const responseBodyRaw = await response.text();
             setModelState(providerType, modelName, {
                 status: 'success',
                 endpoint: reqConfig.endpoint,
                 method: reqConfig.method,
                 requestBody: JSON.stringify(reqConfig.body),
                 httpStatus: response.status,
-                durationMs
+                durationMs,
+                responseBody: responseBodyRaw
             });
         } else {
-            const errorMessage = await parseResponseError(response);
+            const responseBodyRaw = await response.text();
+            let errorMessage = `HTTP ${response.status}`;
+            try {
+                const data = JSON.parse(responseBodyRaw);
+                errorMessage = data?.error?.message || JSON.stringify(data);
+            } catch {
+                if (responseBodyRaw) errorMessage = responseBodyRaw;
+            }
             setModelState(providerType, modelName, {
                 status: 'failed',
                 endpoint: reqConfig.endpoint,
@@ -445,7 +608,8 @@ async function simulateModelRequest(providerType, modelName) {
                 requestBody: JSON.stringify(reqConfig.body),
                 httpStatus: response.status,
                 durationMs,
-                errorMessage
+                errorMessage,
+                responseBody: responseBodyRaw
             });
         }
     } catch (error) {
@@ -474,11 +638,39 @@ async function simulateSingleModelRequest(providerType, modelName, event) {
     if (simulationRunning) {
         return;
     }
-
-    await simulateModelRequest(providerType, modelName);
+    const ready = await ensureServerReadyForSimulation();
+    if (!ready) return;
+    await runProviderSimulation(providerType, async () => {
+        await simulateModelRequest(providerType, modelName);
+    });
 }
 
-async function simulateAllModelsRequest() {
+async function handleModelItemClick(providerType, modelName, element, event) {
+    if (event) {
+        event.preventDefault();
+    }
+
+    await copyModelName(modelName, element);
+    await simulateSingleModelRequest(providerType, modelName);
+}
+
+function showModelRequestDetails(providerType, modelName, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+
+    const state = getModelState(providerType, modelName);
+    const content = buildDetailText(providerType, modelName, state);
+    openModelRequestDetails(content);
+}
+
+async function simulateProviderModelsRequest(providerType, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+
     if (simulationRunning) {
         return;
     }
@@ -490,27 +682,25 @@ async function simulateAllModelsRequest() {
     if (!modelsCache) {
         return;
     }
+    const ready = await ensureServerReadyForSimulation();
+    if (!ready) return;
+    await runProviderSimulation(providerType, async () => {
+        const modelList = modelsCache[providerType] || [];
+        const concurrency = Math.max(1, Math.min(PROVIDER_SIMULATION_CONCURRENCY, modelList.length || 1));
+        const queue = [...modelList];
 
-    simulationRunning = true;
-    updateSimulationButtonState();
-
-    try {
-        const providerTypes = Object.keys(modelsCache);
-        for (const providerType of providerTypes) {
-            if (currentProviderConfigs) {
-                const config = currentProviderConfigs.find(c => c.id === providerType);
-                if (config && config.visible === false) continue;
-            }
-
-            const modelList = modelsCache[providerType] || [];
-            for (const modelName of modelList) {
+        const workers = Array.from({ length: concurrency }, async () => {
+            while (queue.length > 0) {
+                const modelName = queue.shift();
+                if (!modelName) {
+                    continue;
+                }
                 await simulateModelRequest(providerType, modelName);
             }
-        }
-    } finally {
-        simulationRunning = false;
-        updateSimulationButtonState();
-    }
+        });
+
+        await Promise.all(workers);
+    });
 }
 
 /**
@@ -542,12 +732,6 @@ async function copyModelName(modelName, element) {
     const success = await copyToClipboard(modelName);
     
     if (success) {
-        // 添加复制成功的视觉反馈
-        element.classList.add('copied');
-        setTimeout(() => {
-            element.classList.remove('copied');
-        }, 1000);
-        
         // 显示 Toast 提示
         showCopyToast(modelName);
     }
@@ -574,11 +758,6 @@ async function initModelsManager() {
 }
 
 function bindModelSimulationEvents() {
-    const simulateAllBtn = document.getElementById('simulateAllModelsBtn');
-    if (simulateAllBtn && !simulateAllBtn.dataset.bound) {
-        simulateAllBtn.dataset.bound = '1';
-        simulateAllBtn.addEventListener('click', simulateAllModelsRequest);
-    }
     updateSimulationButtonState();
 }
 
@@ -593,9 +772,13 @@ async function refreshModels() {
 // 导出到全局作用域供 HTML 调用
 window.toggleProviderModels = toggleProviderModels;
 window.copyModelName = copyModelName;
+window.handleModelItemClick = handleModelItemClick;
 window.refreshModels = refreshModels;
 window.simulateSingleModelRequest = simulateSingleModelRequest;
-window.simulateAllModelsRequest = simulateAllModelsRequest;
+window.simulateProviderModelsRequest = simulateProviderModelsRequest;
+window.showModelRequestDetails = showModelRequestDetails;
+window.closeModelRequestDetails = closeModelRequestDetails;
+window.copyModelRequestDetails = copyModelRequestDetails;
 
 // 监听组件加载完成事件
 window.addEventListener('componentsLoaded', () => {

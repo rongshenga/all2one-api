@@ -128,39 +128,6 @@
     margin-bottom: 1.5rem;
 }
 
-.models-actions {
-    margin-top: 0.75rem;
-}
-
-.models-action-btn {
-    border: 1px solid var(--primary-color);
-    background: var(--primary-10);
-    color: var(--primary-color);
-    padding: 0.5rem 0.875rem;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    transition: var(--transition);
-}
-
-.models-action-btn:hover:not(:disabled) {
-    background: var(--primary-color);
-    color: #fff;
-}
-
-.models-action-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.7;
-}
-
-.models-action-btn.loading i {
-    animation: spin 1s linear infinite;
-}
-
 /* 模型容器 */
 .models-container {
     background: var(--bg-secondary);
@@ -258,6 +225,40 @@
     transition: var(--transition);
 }
 
+.provider-models-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.provider-models-test-btn {
+    width: 1.8rem;
+    height: 1.8rem;
+    border-radius: 0.45rem;
+    border: 1px solid rgba(45, 212, 191, 0.4);
+    background: rgba(20, 184, 166, 0.12);
+    color: #2dd4bf;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.provider-models-test-btn:hover:not(:disabled) {
+    background: rgba(20, 184, 166, 0.22);
+    transform: translateY(-1px);
+}
+
+.provider-models-test-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.provider-models-test-btn.loading i {
+    animation: spin 1s linear infinite;
+}
+
 .provider-models-header.collapsed .provider-models-toggle {
     transform: rotate(-90deg);
 }
@@ -321,18 +322,7 @@
     word-break: break-all;
 }
 
-.model-item-status {
-    flex-shrink: 0;
-    font-size: 0.68rem;
-    line-height: 1;
-    padding: 0.22rem 0.38rem;
-    border-radius: 9999px;
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-color);
-}
-
-.model-item-test-btn {
+.model-item-detail-btn {
     width: 1.4rem;
     height: 1.4rem;
     border-radius: var(--radius-sm);
@@ -348,92 +338,114 @@
     flex-shrink: 0;
 }
 
-.model-item-test-btn:hover {
+.model-item-detail-btn:hover {
     color: var(--primary-color);
     border-color: var(--primary-color);
     background: var(--primary-10);
-}
-
-.model-item-copy {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    color: var(--text-tertiary);
-    opacity: 0;
-    transition: var(--transition);
-    font-size: 0.75rem;
-}
-
-.model-item:hover .model-item-copy {
-    opacity: 1;
-    color: var(--primary-color);
-}
-
-/* 复制成功动画 */
-.model-item.copied {
-    border-color: var(--success-color);
-    background: var(--success-10);
-}
-
-.model-item.copied .model-item-copy {
-    opacity: 1;
-    color: var(--success-color);
-}
-
-.model-item.copied::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--success-color);
-    opacity: 0.1;
-    animation: copyFlash 0.3s ease-out;
 }
 
 .model-item.is-testing {
-    border-color: var(--primary-color);
-    background: var(--primary-10);
-}
-
-.model-item.is-testing .model-item-status {
-    background: rgba(59, 130, 246, 0.12);
-    border-color: rgba(59, 130, 246, 0.35);
-    color: #2563eb;
+    border-color: rgba(96, 165, 250, 0.9);
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.3) 0%, rgba(30, 64, 175, 0.2) 100%);
+    box-shadow: inset 0 0 0 1px rgba(147, 197, 253, 0.2);
 }
 
 .model-item.is-success {
-    border-color: var(--success-color);
-    background: var(--success-10);
-}
-
-.model-item.is-success .model-item-status {
-    background: rgba(16, 185, 129, 0.16);
-    border-color: rgba(16, 185, 129, 0.35);
-    color: var(--success-color);
+    border-color: rgba(16, 185, 129, 0.95);
+    background: linear-gradient(135deg, rgba(5, 150, 105, 0.34) 0%, rgba(6, 95, 70, 0.22) 100%);
+    box-shadow: inset 0 0 0 1px rgba(110, 231, 183, 0.24);
 }
 
 .model-item.is-failed {
-    border-color: var(--danger-color);
-    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(248, 113, 113, 0.95);
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.34) 0%, rgba(127, 29, 29, 0.22) 100%);
+    box-shadow: inset 0 0 0 1px rgba(252, 165, 165, 0.2);
 }
 
-.model-item.is-failed .model-item-status {
-    background: rgba(239, 68, 68, 0.12);
-    border-color: rgba(239, 68, 68, 0.35);
-    color: var(--danger-color);
+.model-detail-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: none;
 }
 
-@keyframes copyFlash {
-    0% {
-        opacity: 0.3;
-    }
-    100% {
-        opacity: 0;
-    }
+.model-detail-modal.visible {
+    display: block;
+}
+
+.model-detail-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.7);
+    backdrop-filter: blur(2px);
+}
+
+.model-detail-modal__dialog {
+    position: relative;
+    width: min(920px, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    margin: 1rem auto;
+    background: #0f172a;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(2, 6, 23, 0.45);
+    display: flex;
+    flex-direction: column;
+}
+
+.model-detail-modal__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+}
+
+.model-detail-modal__header h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #e2e8f0;
+}
+
+.model-detail-modal__actions {
+    display: inline-flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.model-detail-modal__copy,
+.model-detail-modal__close {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(30, 41, 59, 0.85);
+    color: #cbd5e1;
+    height: 1.9rem;
+    padding: 0 0.65rem;
+    border-radius: 0.45rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.model-detail-modal__copy:hover,
+.model-detail-modal__close:hover {
+    border-color: rgba(45, 212, 191, 0.55);
+    color: #99f6e4;
+}
+
+.model-detail-modal__content {
+    margin: 0;
+    padding: 0.9rem 1rem 1rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    line-height: 1.45;
 }
 
 /* 空状态 */

@@ -160,7 +160,6 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         { flag: '--runtime-storage-backend', configKey: 'RUNTIME_STORAGE_BACKEND', type: 'enum', validValues: ['file', 'db'] },
         { flag: '--runtime-storage-db-path', configKey: 'RUNTIME_STORAGE_DB_PATH', type: 'string' },
         { flag: '--runtime-storage-dual-write', configKey: 'RUNTIME_STORAGE_DUAL_WRITE', type: 'bool' },
-        { flag: '--runtime-storage-auto-import-provider-pools', configKey: 'RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS', type: 'bool' },
         { flag: '--runtime-storage-fallback-to-file', configKey: 'RUNTIME_STORAGE_FALLBACK_TO_FILE', type: 'bool' },
         { flag: '--max-error-count',      configKey: 'MAX_ERROR_COUNT',        type: 'int' },
     ];

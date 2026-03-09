@@ -59,10 +59,7 @@ async function loadProviderPoolSummaries(currentConfig, providerPoolManager) {
                 || runtimeStorage?.loadProviderPoolsSummary
                 || runtimeStorage?.rawStorage?.loadProviderPoolsSummary;
             if (typeof summaryLoader === 'function') {
-                const summaries = await summaryLoader.call(providerDomain || runtimeStorage, {
-                    filePath: getProviderPoolsFilePath(currentConfig),
-                    autoImportFromFile: currentConfig?.RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS !== false
-                });
+                const summaries = await summaryLoader.call(providerDomain || runtimeStorage);
                 if (summaries && Object.keys(summaries).length > 0) {
                     return summaries;
                 }

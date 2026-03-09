@@ -14,6 +14,7 @@ const mockLogger = {
 
 let initializeConfig;
 let closeRuntimeStorage;
+let initializeRuntimeStorage;
 
 async function createTempDir(prefix) {
     return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -28,7 +29,7 @@ describe('Config manager runtime storage bootstrap', () => {
         }));
 
         ({ initializeConfig } = await import('../src/core/config-manager.js'));
-        ({ closeRuntimeStorage } = await import('../src/storage/runtime-storage-registry.js'));
+        ({ closeRuntimeStorage, initializeRuntimeStorage } = await import('../src/storage/runtime-storage-registry.js'));
     });
 
     afterEach(async () => {
@@ -49,7 +50,7 @@ describe('Config manager runtime storage bootstrap', () => {
         const dbPath = path.join(tempDir, 'runtime.sqlite');
 
         await fs.writeFile(promptPath, 'system prompt', 'utf8');
-        await fs.writeFile(poolsPath, JSON.stringify({
+        const seedSnapshot = {
             'grok-custom': [
                 {
                     uuid: 'grok-1',
@@ -62,7 +63,8 @@ describe('Config manager runtime storage bootstrap', () => {
                     checkModelName: 'grok-3'
                 }
             ]
-        }, null, 2), 'utf8');
+        };
+        await fs.writeFile(poolsPath, JSON.stringify(seedSnapshot, null, 2), 'utf8');
 
         await fs.writeFile(configPath, JSON.stringify({
             REQUIRED_API_KEY: '123456',
@@ -74,10 +76,19 @@ describe('Config manager runtime storage bootstrap', () => {
             PROVIDER_POOLS_FILE_PATH: poolsPath,
             RUNTIME_STORAGE_BACKEND: 'db',
             RUNTIME_STORAGE_DB_PATH: dbPath,
-            RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: true,
             RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
             LOG_OUTPUT_MODE: 'none'
         }, null, 2), 'utf8');
+
+        const runtimeStorage = await initializeRuntimeStorage({
+            PROVIDER_POOLS_FILE_PATH: poolsPath,
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: dbPath,
+            RUNTIME_STORAGE_FALLBACK_TO_FILE: true
+        });
+        await runtimeStorage.replaceProviderPoolsSnapshot(seedSnapshot, {
+            sourceKind: 'test_seed'
+        });
 
         const firstConfig = await initializeConfig([], configPath);
         expect(firstConfig.RUNTIME_STORAGE_INFO.backend).toBe('db');

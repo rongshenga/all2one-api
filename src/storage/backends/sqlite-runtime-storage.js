@@ -9,7 +9,6 @@ import {
     detectProviderFromPath,
     formatSystemPath
 } from '../../utils/provider-utils.js';
-import { FileRuntimeStorage } from './file-runtime-storage.js';
 import { SqliteCliClient } from '../sqlite-cli-client.js';
 import { wrapRuntimeStorageError } from '../runtime-storage-error.js';
 import {
@@ -1351,51 +1350,10 @@ function createEmptyPotluckKeyStore() {
     };
 }
 
-function hasPotluckUserData(store) {
-    return Boolean(
-        store
-        && typeof store === 'object'
-        && ((store.config && Object.keys(store.config).length > 0)
-            || (store.users && Object.keys(store.users).length > 0))
-    );
-}
-
-function hasPotluckKeyStore(store) {
-    return Boolean(
-        store
-        && typeof store === 'object'
-        && store.keys
-        && Object.keys(store.keys).length > 0
-    );
-}
-
-async function readJsonFileSafe(filePath, fallbackValue = null) {
-    try {
-        const raw = await pfs.readFile(filePath, 'utf8');
-        return JSON.parse(raw);
-    } catch (error) {
-        if (error.code !== 'ENOENT') {
-            logger.warn(`[RuntimeStorage:db] Failed to read legacy file ${filePath}: ${error.message}`);
-        }
-        return fallbackValue;
-    }
-}
-
-const LEGACY_IMPORT_MARKERS = Object.freeze({
-    providerPools: 'legacy_import_provider_pools',
-    usageCache: 'legacy_import_usage_cache',
-    adminSessions: 'legacy_import_admin_sessions',
-    potluckUserData: 'legacy_import_potluck_user_data',
-    potluckKeyStore: 'legacy_import_potluck_key_store'
-});
-
-
 export class SqliteRuntimeStorage {
     constructor(config = {}) {
         this.config = config;
         this.dbPath = config.RUNTIME_STORAGE_DB_PATH || 'configs/runtime/runtime-storage.sqlite';
-        this.filePath = config.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
-        this.legacyFileBridgeEnabled = config.RUNTIME_STORAGE_ENABLE_LEGACY_FILE_BRIDGE === true;
         this.compatExportPageSize = normalizePositiveInt(config.RUNTIME_STORAGE_COMPAT_EXPORT_PAGE_SIZE, 1000);
         this.startupRestorePageSize = normalizePositiveInt(config.RUNTIME_STORAGE_STARTUP_RESTORE_PAGE_SIZE, 2000);
         this.client = new SqliteCliClient(this.dbPath, {
@@ -1404,7 +1362,6 @@ export class SqliteRuntimeStorage {
             maxRetryAttempts: config.RUNTIME_STORAGE_DB_RETRY_ATTEMPTS ?? 2,
             retryDelayMs: config.RUNTIME_STORAGE_DB_RETRY_DELAY_MS ?? 75
         });
-        this.fileStorage = this.legacyFileBridgeEnabled ? new FileRuntimeStorage(config) : null;
         this.kind = 'db';
         this.initialized = false;
         const configuredAdminSessionTouchIntervalMs = Number.parseInt(config.RUNTIME_STORAGE_ADMIN_SESSION_TOUCH_INTERVAL_MS, 10);
@@ -1420,7 +1377,6 @@ export class SqliteRuntimeStorage {
             backend: 'db',
             driver: 'sqlite3-cli',
             dbPath: this.dbPath,
-            filePath: this.filePath,
             compatExportPageSize: this.compatExportPageSize,
             startupRestorePageSize: this.startupRestorePageSize
         };
@@ -1457,27 +1413,6 @@ ON CONFLICT(meta_key) DO UPDATE SET
     async loadProviderPoolsSnapshot(options = {}) {
         await this.initialize();
 
-        const hasData = await this.hasProviderData();
-        const autoImportFromFile = this.legacyFileBridgeEnabled && options.autoImportFromFile !== false;
-        const importFilePath = options.filePath || this.filePath;
-        const importMarkerKey = LEGACY_IMPORT_MARKERS.providerPools;
-
-        if (hasData) {
-            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
-        } else if (autoImportFromFile && importFilePath && fs.existsSync(importFilePath)) {
-            const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
-            if (!legacyImportMarked) {
-                const snapshot = await this.fileStorage.loadProviderPoolsSnapshot();
-                if (Object.keys(snapshot).length > 0) {
-                    await this.replaceProviderPoolsSnapshot(snapshot, {
-                        sourceKind: 'provider_pools_json'
-                    });
-                    await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
-                    logger.info(`[RuntimeStorage:db] Seeded provider pools from ${importFilePath}`);
-                }
-            }
-        }
-
         return await this.exportProviderPoolsSnapshot({
             ...options,
             pageSize: normalizePositiveInt(
@@ -1489,27 +1424,6 @@ ON CONFLICT(meta_key) DO UPDATE SET
 
     async loadProviderPoolsSummary(options = {}) {
         await this.initialize();
-
-        const hasData = await this.hasProviderData();
-        const autoImportFromFile = this.legacyFileBridgeEnabled && options.autoImportFromFile !== false;
-        const importFilePath = options.filePath || this.filePath;
-        const importMarkerKey = LEGACY_IMPORT_MARKERS.providerPools;
-
-        if (hasData) {
-            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
-        } else if (autoImportFromFile && importFilePath && fs.existsSync(importFilePath)) {
-            const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
-            if (!legacyImportMarked) {
-                const snapshot = await this.fileStorage.loadProviderPoolsSnapshot();
-                if (Object.keys(snapshot).length > 0) {
-                    await this.replaceProviderPoolsSnapshot(snapshot, {
-                        sourceKind: 'provider_pools_json'
-                    });
-                    await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
-                    logger.info(`[RuntimeStorage:db] Seeded provider pools from ${importFilePath}`);
-                }
-            }
-        }
 
         const rows = await this.client.query(`
 SELECT
@@ -2632,78 +2546,13 @@ WHERE processed_count IS NULL OR processed_count = 0;
         }
     }
 
-    async #hasLegacyImportMarker(markerKey) {
-        if (!markerKey) {
-            return false;
-        }
-
-        const rows = await this.client.query(`
-SELECT meta_key
-FROM runtime_storage_meta
-WHERE meta_key = ${sqlValue(markerKey)}
-LIMIT 1;
-        `);
-        return rows.length > 0;
-    }
-
-    async #setLegacyImportMarker(markerKey, markerValue = '1') {
-        if (!markerKey) {
-            return;
-        }
-
-        await this.client.exec(`
-INSERT INTO runtime_storage_meta (meta_key, meta_value, updated_at)
-VALUES (
-    ${sqlValue(markerKey)},
-    ${sqlValue(markerValue)},
-    ${sqlValue(nowIso())}
-)
-ON CONFLICT(meta_key) DO UPDATE SET
-    meta_value = excluded.meta_value,
-    updated_at = excluded.updated_at;
-        `);
-    }
-
-    async #ensureLegacyImportMarker(markerKey, markerValue = '1') {
-        const markerExists = await this.#hasLegacyImportMarker(markerKey);
-        if (markerExists) {
-            return false;
-        }
-
-        await this.#setLegacyImportMarker(markerKey, markerValue);
-        return true;
-    }
-
     async #ensureUsageCacheSeeded() {
         const countRows = await this.client.query(`
 SELECT COUNT(*) AS count
 FROM usage_snapshots
 WHERE provider_id IS NULL;
         `);
-        const snapshotCount = Number(countRows[0]?.count || 0);
-        const importMarkerKey = LEGACY_IMPORT_MARKERS.usageCache;
-        if (snapshotCount > 0) {
-            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
-            return snapshotCount;
-        }
-        if (!this.legacyFileBridgeEnabled || !this.fileStorage) {
-            return 0;
-        }
-
-        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
-        if (legacyImportMarked) {
-            return 0;
-        }
-
-        const legacyCache = await this.fileStorage.loadUsageCacheSnapshot();
-        if (legacyCache?.providers && Object.keys(legacyCache.providers).length > 0) {
-            await this.replaceUsageCacheSnapshot(legacyCache);
-            await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
-            logger.info('[RuntimeStorage:db] Imported legacy usage cache into sqlite runtime storage');
-            return Object.keys(legacyCache.providers).length;
-        }
-
-        return 0;
+        return Number(countRows[0]?.count || 0);
     }
 
     async #loadUsageCacheTimestamp(fallbackTimestamp = null) {
@@ -3021,7 +2870,6 @@ COMMIT;
 
     async getAdminSession(token) {
         await this.initialize();
-        await this.#importLegacyAdminSessionsIfNeeded();
 
         const tokenHash = hashValue(token);
         const row = (await this.client.query(`
@@ -3115,7 +2963,6 @@ COMMIT;
 
     async cleanupExpiredAdminSessions() {
         await this.initialize();
-        await this.#importLegacyAdminSessionsIfNeeded();
 
         const expiredRows = await this.client.query(`
 SELECT id
@@ -3145,7 +2992,6 @@ COMMIT;
 
     async loadPotluckUserData() {
         await this.initialize();
-        await this.#importLegacyPotluckUserDataIfNeeded();
 
         const configRows = await this.client.query(`
 SELECT key, value_json
@@ -3269,7 +3115,6 @@ ON CONFLICT(scope, key) DO UPDATE SET
 
     async loadPotluckKeyStore() {
         await this.initialize();
-        await this.#importLegacyPotluckKeyStoreIfNeeded();
 
         const keyRows = await this.client.query(`
 SELECT id, key_id, name, enabled, daily_limit, used_today, bonus_remaining, last_reset_at, created_at
@@ -3422,117 +3267,6 @@ ON CONFLICT(scope, key) DO UPDATE SET
         statements.push('COMMIT;');
         await this.client.exec(statements.join('\n'));
         return normalizedStore;
-    }
-
-    async #importLegacyAdminSessionsIfNeeded() {
-        if (!this.legacyFileBridgeEnabled) {
-            return;
-        }
-        const countRows = await this.client.query('SELECT COUNT(*) AS count FROM admin_sessions;');
-        const importMarkerKey = LEGACY_IMPORT_MARKERS.adminSessions;
-        if (Number(countRows[0]?.count || 0) > 0) {
-            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
-            return;
-        }
-
-        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
-        if (legacyImportMarked) {
-            return;
-        }
-
-        const tokenStorePath = this.config.TOKEN_STORE_FILE_PATH || 'configs/token-store.json';
-        const legacyStore = await readJsonFileSafe(tokenStorePath, { tokens: {} });
-        const entries = Object.entries(legacyStore?.tokens || {});
-        if (entries.length === 0) {
-            return;
-        }
-
-        const timestamp = nowIso();
-        const statements = ['BEGIN IMMEDIATE;'];
-        for (const [token, tokenInfo] of entries) {
-            const expiresAt = normalizeIsoOrNull(tokenInfo?.expiryTime) || normalizeIsoOrNull(new Date(Number(tokenInfo?.expiryTime || Date.now())).toISOString()) || timestamp;
-            const createdAt = normalizeIsoOrNull(tokenInfo?.loginTime) || normalizeIsoOrNull(new Date(Number(tokenInfo?.loginTime || Date.now())).toISOString()) || timestamp;
-            statements.push(`
-INSERT INTO admin_sessions (
-    id,
-    token_hash,
-    subject,
-    expires_at,
-    created_at,
-    last_seen_at,
-    source_ip,
-    user_agent,
-    meta_json
-) VALUES (
-    ${sqlValue(buildAdminSessionId(token))},
-    ${sqlValue(hashValue(token))},
-    ${sqlValue(tokenInfo?.username || 'admin')},
-    ${sqlValue(expiresAt)},
-    ${sqlValue(createdAt)},
-    ${sqlValue(timestamp)},
-    ${sqlValue(tokenInfo?.sourceIp || null)},
-    ${sqlValue(tokenInfo?.userAgent || null)},
-    ${sqlValue(JSON.stringify(tokenInfo || {}))}
-);
-            `);
-        }
-        statements.push('COMMIT;');
-        await this.client.exec(statements.join('\n'));
-        await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
-        logger.info('[RuntimeStorage:db] Imported legacy admin sessions into sqlite runtime storage');
-    }
-
-    async #importLegacyPotluckUserDataIfNeeded() {
-        if (!this.legacyFileBridgeEnabled || !this.fileStorage) {
-            return;
-        }
-        const userCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_users;');
-        const configCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_config;');
-        const importMarkerKey = LEGACY_IMPORT_MARKERS.potluckUserData;
-        if (Number(userCountRows[0]?.count || 0) > 0 || Number(configCountRows[0]?.count || 0) > 0) {
-            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
-            return;
-        }
-
-        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
-        if (legacyImportMarked) {
-            return;
-        }
-
-        const legacyStore = await this.fileStorage.loadPotluckUserData();
-        if (!hasPotluckUserData(legacyStore)) {
-            return;
-        }
-
-        await this.savePotluckUserData(legacyStore);
-        await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
-        logger.info('[RuntimeStorage:db] Imported legacy API Potluck user data into sqlite runtime storage');
-    }
-
-    async #importLegacyPotluckKeyStoreIfNeeded() {
-        if (!this.legacyFileBridgeEnabled || !this.fileStorage) {
-            return;
-        }
-        const keyCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_api_keys;');
-        const importMarkerKey = LEGACY_IMPORT_MARKERS.potluckKeyStore;
-        if (Number(keyCountRows[0]?.count || 0) > 0) {
-            await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
-            return;
-        }
-
-        const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
-        if (legacyImportMarked) {
-            return;
-        }
-
-        const legacyStore = await this.fileStorage.loadPotluckKeyStore();
-        if (!hasPotluckKeyStore(legacyStore)) {
-            return;
-        }
-
-        await this.savePotluckKeyStore(legacyStore);
-        await this.#setLegacyImportMarker(importMarkerKey, 'imported_from_legacy_file');
-        logger.info('[RuntimeStorage:db] Imported legacy API Potluck key store into sqlite runtime storage');
     }
 
     async close() {

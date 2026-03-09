@@ -136,10 +136,8 @@ describe('Provider API Summary', () => {
         const handled = await handleGetProvidersSummary(req, res, currentConfig, providerPoolManager);
         expect(handled).toBe(true);
         expect(res.statusCode).toBe(200);
-        expect(loadPoolsSummary).toHaveBeenCalledWith(expect.objectContaining({
-            filePath: 'configs/provider_pools.json',
-            autoImportFromFile: true
-        }));
+        expect(loadPoolsSummary).toHaveBeenCalledTimes(1);
+        expect(loadPoolsSummary).toHaveBeenCalledWith();
         expect(mockLoadProviderPoolsCompatSnapshot).not.toHaveBeenCalled();
 
         const payload = JSON.parse(res.body);

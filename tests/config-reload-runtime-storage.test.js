@@ -19,6 +19,7 @@ let reloadConfig;
 let handleGetConfig;
 let handleUpdateConfig;
 let closeRuntimeStorage;
+let initializeRuntimeStorage;
 
 async function createTempDir(prefix) {
     return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -66,7 +67,7 @@ describe('Config reload runtime storage compatibility', () => {
 
         ({ initializeConfig } = await import('../src/core/config-manager.js'));
         ({ reloadConfig, handleGetConfig, handleUpdateConfig } = await import('../src/ui-modules/config-api.js'));
-        ({ closeRuntimeStorage } = await import('../src/storage/runtime-storage-registry.js'));
+        ({ closeRuntimeStorage, initializeRuntimeStorage } = await import('../src/storage/runtime-storage-registry.js'));
     });
 
     afterEach(async () => {
@@ -90,7 +91,7 @@ describe('Config reload runtime storage compatibility', () => {
 
         await fs.mkdir(configsDir, { recursive: true });
         await fs.writeFile(promptPath, 'system prompt', 'utf8');
-        await fs.writeFile(poolsPath, JSON.stringify({
+        const seedSnapshot = {
             'grok-custom': [
                 {
                     uuid: 'grok-1',
@@ -102,7 +103,8 @@ describe('Config reload runtime storage compatibility', () => {
                     checkModelName: 'grok-3'
                 }
             ]
-        }, null, 2), 'utf8');
+        };
+        await fs.writeFile(poolsPath, JSON.stringify(seedSnapshot, null, 2), 'utf8');
         await fs.writeFile(configPath, JSON.stringify({
             REQUIRED_API_KEY: '123456',
             SERVER_PORT: 3000,
@@ -113,12 +115,18 @@ describe('Config reload runtime storage compatibility', () => {
             PROVIDER_POOLS_FILE_PATH: './configs/provider_pools.json',
             RUNTIME_STORAGE_BACKEND: 'db',
             RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
-            RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: true,
             RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
             LOG_OUTPUT_MODE: 'none'
         }, null, 2), 'utf8');
 
         process.chdir(tempDir);
+        const runtimeStorage = await initializeRuntimeStorage({
+            PROVIDER_POOLS_FILE_PATH: './configs/provider_pools.json',
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
+            RUNTIME_STORAGE_FALLBACK_TO_FILE: true
+        });
+        await runtimeStorage.replaceProviderPoolsSnapshot(seedSnapshot, { sourceKind: 'test_seed' });
 
         const firstConfig = await initializeConfig([], configPath);
         expect(firstConfig.RUNTIME_STORAGE_INFO.backend).toBe('db');
@@ -171,7 +179,6 @@ describe('Config reload runtime storage compatibility', () => {
             PROVIDER_POOLS_FILE_PATH: './configs/provider_pools.json',
             RUNTIME_STORAGE_BACKEND: 'db',
             RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
-            RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: true,
             RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
             LOG_OUTPUT_MODE: 'none'
         }, null, 2), 'utf8');
@@ -205,7 +212,7 @@ describe('Config reload runtime storage compatibility', () => {
 
         await fs.mkdir(configsDir, { recursive: true });
         await fs.writeFile(promptPath, 'system prompt', 'utf8');
-        await fs.writeFile(poolsPath, JSON.stringify({
+        const seedSnapshot = {
             'grok-custom': [
                 {
                     uuid: 'grok-cache-1',
@@ -217,7 +224,8 @@ describe('Config reload runtime storage compatibility', () => {
                     checkModelName: 'grok-3'
                 }
             ]
-        }, null, 2), 'utf8');
+        };
+        await fs.writeFile(poolsPath, JSON.stringify(seedSnapshot, null, 2), 'utf8');
         await fs.writeFile(configPath, JSON.stringify({
             REQUIRED_API_KEY: '123456',
             SERVER_PORT: 3000,
@@ -228,12 +236,18 @@ describe('Config reload runtime storage compatibility', () => {
             PROVIDER_POOLS_FILE_PATH: './configs/provider_pools.json',
             RUNTIME_STORAGE_BACKEND: 'db',
             RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
-            RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: true,
             RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
             LOG_OUTPUT_MODE: 'none'
         }, null, 2), 'utf8');
 
         process.chdir(tempDir);
+        const runtimeStorage = await initializeRuntimeStorage({
+            PROVIDER_POOLS_FILE_PATH: './configs/provider_pools.json',
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
+            RUNTIME_STORAGE_FALLBACK_TO_FILE: true
+        });
+        await runtimeStorage.replaceProviderPoolsSnapshot(seedSnapshot, { sourceKind: 'test_seed' });
 
         const providerPoolManager = {
             providerPools: { stale: [] },
@@ -335,7 +349,6 @@ describe('Config reload runtime storage compatibility', () => {
             RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
             RUNTIME_STORAGE_DUAL_WRITE: true,
             RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
-            RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: false,
             LOG_OUTPUT_MODE: 'none',
             CUSTOM_FIELD_SHOULD_STAY: 'keep-me'
         }, null, 2), 'utf8');
@@ -354,7 +367,6 @@ describe('Config reload runtime storage compatibility', () => {
             RUNTIME_STORAGE_DB_PATH: './configs/runtime.sqlite',
             RUNTIME_STORAGE_DUAL_WRITE: true,
             RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
-            RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: false,
             LOG_OUTPUT_MODE: 'none',
             providerPools: {
                 'grok-custom': [{ uuid: 'grok-1', GROK_COOKIE_TOKEN: 'secret' }]
@@ -378,7 +390,6 @@ describe('Config reload runtime storage compatibility', () => {
         expect(savedConfig.RUNTIME_STORAGE_DB_PATH).toBe('./configs/runtime.sqlite');
         expect(savedConfig.RUNTIME_STORAGE_DUAL_WRITE).toBe(true);
         expect(savedConfig.RUNTIME_STORAGE_FALLBACK_TO_FILE).toBe(true);
-        expect(savedConfig.RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS).toBe(false);
         expect(savedConfig.CUSTOM_FIELD_SHOULD_STAY).toBe('keep-me');
         expect(savedConfig.providerPools).toBeUndefined();
         expect(savedConfig.SYSTEM_PROMPT_CONTENT).toBeUndefined();

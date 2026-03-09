@@ -652,11 +652,7 @@ export async function loadProviderPoolsCompatSnapshot(config = {}, options = {})
     }
 
     if (typeof storage.loadProviderPoolsSnapshot === 'function') {
-        return await storage.loadProviderPoolsSnapshot({
-            filePath: config.PROVIDER_POOLS_FILE_PATH,
-            autoImportFromFile: config.RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS !== false,
-            ...options
-        });
+        return await storage.loadProviderPoolsSnapshot(options);
     }
 
     if (typeof storage.exportProviderPoolsSnapshot === 'function') {
