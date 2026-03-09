@@ -366,8 +366,6 @@ async function startServer() {
         // 默认先快速加载配置，provider pools 在后续启动阶段按模式处理
         deferProviderPoolsLoad: true
     });
-    // 默认阻塞启动；仅当显式配置 true 时才启用后台初始化
-    const startupBackgroundInitEnabled = CONFIG.STARTUP_BACKGROUND_INIT === true;
     
     // 自动关联 configs 目录中的配置文件到对应的提供商
     // logger.info('[Initialization] Checking for unlinked provider configs...');
@@ -406,17 +404,9 @@ async function startServer() {
     // Initialize UI management features
     initializeUIManagement(CONFIG);
 
-    // 启动模式：默认阻塞初始化，显式配置后可启用后台初始化
-    if (!startupBackgroundInitEnabled) {
-        logger.info('[Initialization] STARTUP_BACKGROUND_INIT=false, running bootstrap before listen...');
-        await runProviderBootstrap();
-    } else {
-        updateStartupState({
-            ready: false,
-            failed: false,
-            phase: 'waiting_http_listen'
-        });
-    }
+    // 启动模式固定为阻塞初始化：先完成 bootstrap，再开始监听端口
+    logger.info('[Initialization] Blocking startup enabled, running bootstrap before listen...');
+    await runProviderBootstrap();
 
     // Create request handler
     const requestHandlerInstance = createRequestHandler(CONFIG, {
@@ -456,11 +446,7 @@ async function startServer() {
         logger.info(`  • Claude-compatible: /v1/messages`);
         logger.info(`  • Health check: /health`);
         logger.info(`  • UI Management Console: http://${CONFIG.HOST}:${CONFIG.SERVER_PORT}/`);
-        if (startupBackgroundInitEnabled) {
-            logger.info(`  • Startup mode: background bootstrap (Web UI available immediately)`);
-        } else {
-            logger.info(`  • Startup mode: blocking bootstrap`);
-        }
+        logger.info(`  • Startup mode: blocking bootstrap`);
 
         // Auto-open browser to UI (only if host is 0.0.0.0 or 127.0.0.1)
         // if (CONFIG.HOST === '0.0.0.0' || CONFIG.HOST === '127.0.0.1') {
@@ -491,17 +477,6 @@ async function startServer() {
             sendToMaster({ type: 'ready', pid: process.pid });
         }
 
-        if (startupBackgroundInitEnabled) {
-            updateStartupState({
-                ready: false,
-                failed: false,
-                phase: 'background_bootstrap_running'
-            });
-
-            runProviderBootstrap().catch((error) => {
-                logger.error(`[Initialization] Background bootstrap failed: ${error.message}`);
-            });
-        }
     });
     return serverInstance; // Return the server instance for testing purposes
 }

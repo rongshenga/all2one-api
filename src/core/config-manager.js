@@ -106,7 +106,6 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
             REQUEST_MAX_RETRIES: 3,
             REQUEST_BASE_DELAY: 1000,
             CREDENTIAL_SWITCH_MAX_RETRIES: 5, // 坏凭证切换最大重试次数（用于认证错误后切换凭证）
-            STARTUP_BACKGROUND_INIT: true, // 是否启用“先启动 Web，再后台初始化号池”
             CRON_NEAR_MINUTES: 15,
             CRON_REFRESH_TOKEN: false,
             LOGIN_EXPIRY: 3600, // 登录过期时间（秒），默认1小时
@@ -201,10 +200,6 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
             currentConfig[key] = value;
         }
     }
-    if (currentConfig.STARTUP_BACKGROUND_INIT === undefined) {
-        currentConfig.STARTUP_BACKGROUND_INIT = true;
-    }
-
     normalizeConfiguredProviders(currentConfig);
 
     if (!currentConfig.SYSTEM_PROMPT_FILE_PATH) {

@@ -347,7 +347,7 @@ function isModelLoading(providerType, modelName) {
 }
 
 function getProviderSimulationButtonIcon(providerType) {
-    if (simulationRunning && activeSimulationProviderType === providerType) {
+    if (simulationRunning && simulationTriggerMode === 'batch' && activeSimulationProviderType === providerType) {
         return 'fas fa-spinner fa-spin';
     }
     return 'fas fa-bolt';
