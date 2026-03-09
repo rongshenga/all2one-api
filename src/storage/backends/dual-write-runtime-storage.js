@@ -352,9 +352,9 @@ export class DualWriteRuntimeStorage {
         );
     }
 
-    async loadProviderUsageSnapshot(providerType) {
+    async loadProviderUsageSnapshot(providerType, options = {}) {
         return await executePrimary(this.primaryStorage, 'loadProviderUsageSnapshot', 'read', async (storage) => {
-            return await storage.loadProviderUsageSnapshot(providerType);
+            return await storage.loadProviderUsageSnapshot(providerType, options);
         }, {
             providerType,
             replaySafe: true,

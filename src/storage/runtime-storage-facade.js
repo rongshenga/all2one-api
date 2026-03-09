@@ -59,8 +59,8 @@ class UsageStorageDomainFacade extends StorageDomainFacade {
         return await this.storage.replaceUsageCacheSnapshot(usageCache);
     }
 
-    async loadProviderSnapshot(providerType) {
-        return await this.storage.loadProviderUsageSnapshot(providerType);
+    async loadProviderSnapshot(providerType, options = {}) {
+        return await this.storage.loadProviderUsageSnapshot(providerType, options);
     }
 
     async upsertProviderSnapshot(providerType, snapshot = {}) {
@@ -262,8 +262,8 @@ export class RuntimeStorageFacade {
         return await this.usage.replaceCacheSnapshot(usageCache);
     }
 
-    async loadProviderUsageSnapshot(providerType) {
-        return await this.usage.loadProviderSnapshot(providerType);
+    async loadProviderUsageSnapshot(providerType, options = {}) {
+        return await this.usage.loadProviderSnapshot(providerType, options);
     }
 
     async upsertProviderUsageSnapshot(providerType, snapshot = {}) {

@@ -150,6 +150,7 @@ describe('SqliteRuntimeStorage DAO SQL', () => {
     test('should skip delete transaction when no expired admin sessions exist', async () => {
         mockClient.query
             .mockResolvedValueOnce([{ count: 1 }])
+            .mockResolvedValueOnce([{ meta_key: 'legacy_import_admin_sessions' }])
             .mockResolvedValueOnce([]);
 
         await expect(storage.cleanupExpiredAdminSessions()).resolves.toEqual({
@@ -192,6 +193,7 @@ describe('SqliteRuntimeStorage DAO SQL', () => {
         const now = new Date().toISOString();
         mockClient.query
             .mockResolvedValueOnce([{ count: 1 }])
+            .mockResolvedValueOnce([{ meta_key: 'legacy_import_admin_sessions' }])
             .mockResolvedValueOnce([
                 {
                     id: 'session-token-1',
@@ -361,6 +363,69 @@ test('should surface transactional exec failures without masking commit errors',
     })).rejects.toThrow('cannot commit transaction');
     expect(mockClient.exec).toHaveBeenCalledTimes(1);
 });
+
+    test('should page provider usage snapshot queries in sqlite storage', async () => {
+        mockClient.query
+            .mockResolvedValueOnce([{ count: 1 }])
+            .mockResolvedValueOnce([{ meta_key: 'legacy_import_usage_cache' }])
+            .mockResolvedValueOnce([
+                {
+                    id: 'usage_openai-codex-oauth_all',
+                    provider_type: 'openai-codex-oauth',
+                    snapshot_at: '2026-03-09T10:00:00.000Z',
+                    total_count: 88610,
+                    success_count: 240,
+                    error_count: 10,
+                    processed_count: 250,
+                    payload_json: null
+                }
+            ])
+            .mockResolvedValueOnce([
+                {
+                    id: 'inst-101',
+                    snapshot_id: 'usage_openai-codex-oauth_all',
+                    instance_key: 'openai-codex-oauth:101',
+                    uuid: 'codex-101',
+                    display_name: 'Codex 101',
+                    success: 1,
+                    error_message: null,
+                    is_disabled: 0,
+                    is_healthy: 1,
+                    last_refreshed_at: '2026-03-09T10:00:00.000Z',
+                    subscription_title: null,
+                    subscription_type: null,
+                    subscription_upgrade_capability: null,
+                    subscription_overage_capability: null,
+                    user_email: null,
+                    user_id: null,
+                    instance_order: 101
+                }
+            ])
+            .mockResolvedValueOnce([]);
+
+        const snapshot = await storage.loadProviderUsageSnapshot('openai-codex-oauth', {
+            page: 2,
+            limit: 100
+        });
+
+        expect(snapshot).toMatchObject({
+            providerType: 'openai-codex-oauth',
+            page: 2,
+            limit: 100,
+            availableCount: 250,
+            totalPages: 3,
+            hasPrevPage: true,
+            hasNextPage: true
+        });
+        expect(snapshot.instances).toHaveLength(1);
+        expect(snapshot.instances[0]).toMatchObject({
+            uuid: 'codex-101',
+            name: 'Codex 101',
+            success: true
+        });
+        expect(mockClient.query.mock.calls[2][0]).toContain('NULL AS payload_json');
+        expect(mockClient.query.mock.calls[3][0]).toContain('LIMIT 100 OFFSET 100');
+    });
 
 test('should fail fast before issuing SQL when potluck payload serialization throws', async () => {
     const circular = {};

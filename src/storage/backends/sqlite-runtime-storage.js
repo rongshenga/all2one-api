@@ -993,6 +993,67 @@ function buildLegacyUsageSnapshotFromRow(row = {}) {
     };
 }
 
+function normalizeUsageSnapshotPageOptions(options = {}) {
+    const rawPage = Number.parseInt(options?.page, 10);
+    const rawLimit = Number.parseInt(options?.limit, 10);
+    if (!Number.isFinite(rawPage) && !Number.isFinite(rawLimit)) {
+        return null;
+    }
+
+    return {
+        page: Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1,
+        limit: Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 100
+    };
+}
+
+function buildUsageSnapshotPageMeta(totalAvailable = 0, pageQuery = null) {
+    if (!pageQuery) {
+        return null;
+    }
+
+    const availableCount = Math.max(0, Number(totalAvailable || 0));
+    const totalPages = Math.max(1, Math.ceil(Math.max(availableCount, 1) / pageQuery.limit));
+    const page = Math.min(Math.max(1, pageQuery.page), totalPages);
+
+    return {
+        availableCount,
+        page,
+        limit: pageQuery.limit,
+        totalPages,
+        hasPrevPage: page > 1,
+        hasNextPage: page < totalPages,
+        offset: (page - 1) * pageQuery.limit
+    };
+}
+
+function applyUsageSnapshotPageMeta(snapshot = {}, pageMeta = null) {
+    if (!pageMeta) {
+        return snapshot;
+    }
+
+    return {
+        ...snapshot,
+        availableCount: pageMeta.availableCount,
+        page: pageMeta.page,
+        limit: pageMeta.limit,
+        totalPages: pageMeta.totalPages,
+        hasPrevPage: pageMeta.hasPrevPage,
+        hasNextPage: pageMeta.hasNextPage
+    };
+}
+
+function paginateLegacyUsageSnapshot(snapshot = {}, pageMeta = null) {
+    if (!pageMeta) {
+        return snapshot;
+    }
+
+    const instances = Array.isArray(snapshot.instances) ? snapshot.instances : [];
+    return applyUsageSnapshotPageMeta({
+        ...snapshot,
+        instances: instances.slice(pageMeta.offset, pageMeta.offset + pageMeta.limit)
+    }, pageMeta);
+}
+
 function buildUsageSnapshotPersistenceRows(providerType, snapshot = {}, fallbackTimestamp = null) {
     const normalizedSnapshot = normalizeUsageSnapshotRecord(providerType, snapshot, fallbackTimestamp);
     const compatSnapshot = normalizeUsageCompatSnapshotRecord(providerType, snapshot, fallbackTimestamp);
@@ -2295,12 +2356,14 @@ ON CONFLICT(id) DO UPDATE SET
         };
     }
 
-    async loadProviderUsageSnapshot(providerType) {
+    async loadProviderUsageSnapshot(providerType, options = {}) {
         await this.initialize();
         await this.#ensureUsageCacheSeeded();
 
+        const pageQuery = normalizeUsageSnapshotPageOptions(options);
+        const payloadColumnSql = pageQuery ? 'NULL AS payload_json' : 'payload_json';
         const row = (await this.client.query(`
-SELECT id, provider_type, snapshot_at, total_count, success_count, error_count, processed_count, payload_json
+SELECT id, provider_type, snapshot_at, total_count, success_count, error_count, processed_count, ${payloadColumnSql}
 FROM usage_snapshots
 WHERE provider_id IS NULL AND provider_type = ${sqlValue(providerType)}
 ORDER BY snapshot_at DESC, id DESC
@@ -2311,7 +2374,7 @@ LIMIT 1;
             return null;
         }
 
-        return await this.#loadProviderUsageSnapshotFromRow(row);
+        return await this.#loadProviderUsageSnapshotFromRow(row, { pageQuery });
     }
 
     async upsertProviderUsageSnapshot(providerType, snapshot = {}) {
@@ -2651,16 +2714,22 @@ LIMIT 1;
         return cachedTimestamp || fallbackTimestamp || nowIso();
     }
 
-    async #loadProviderUsageSnapshotFromRow(row) {
+    async #loadProviderUsageSnapshotFromRow(row, options = {}) {
         if (!row) {
             return null;
         }
 
-        if (row.payload_json) {
+        const pageQuery = normalizeUsageSnapshotPageOptions(options?.pageQuery || options);
+        if (!pageQuery && row.payload_json) {
             return buildLegacyUsageSnapshotFromRow(row);
         }
 
         const summary = buildUsageSnapshotSummaryRecord(row);
+        const pageMeta = buildUsageSnapshotPageMeta(summary.processedCount, pageQuery);
+        const instanceLimitClause = pageMeta
+            ? `
+LIMIT ${pageMeta.limit} OFFSET ${pageMeta.offset}`
+            : '';
         const instanceRows = await this.client.query(`
 SELECT
     id,
@@ -2682,21 +2751,120 @@ SELECT
     instance_order
 FROM usage_snapshot_instances
 WHERE snapshot_id = ${sqlValue(row.id)}
-ORDER BY instance_order ASC, id ASC;
+ORDER BY instance_order ASC, id ASC${instanceLimitClause};
         `);
 
         if (instanceRows.length === 0) {
             if (row.payload_json) {
-                return buildLegacyUsageSnapshotFromRow(row);
+                const legacySnapshot = buildLegacyUsageSnapshotFromRow(row);
+                return pageMeta ? paginateLegacyUsageSnapshot(legacySnapshot, pageMeta) : legacySnapshot;
             }
 
-            return {
+            if (pageMeta && pageMeta.availableCount > 0) {
+                const payloadRow = (await this.client.query(`
+SELECT payload_json
+FROM usage_snapshots
+WHERE id = ${sqlValue(row.id)}
+LIMIT 1;
+                `))[0];
+                if (payloadRow?.payload_json) {
+                    return paginateLegacyUsageSnapshot(buildLegacyUsageSnapshotFromRow({
+                        ...row,
+                        payload_json: payloadRow.payload_json
+                    }), pageMeta);
+                }
+            }
+
+            return applyUsageSnapshotPageMeta({
                 ...summary,
                 instances: []
-            };
+            }, pageMeta);
         }
 
-        const breakdownRows = await this.client.query(`
+        let breakdownRows = [];
+        let freeTrialRows = [];
+        let bonusRows = [];
+        if (pageMeta) {
+            const instanceIdsSql = buildSqlInList(instanceRows.map((instanceRow) => instanceRow.id));
+            breakdownRows = instanceIdsSql
+                ? await this.client.query(`
+SELECT
+    b.id,
+    b.instance_id,
+    b.breakdown_order,
+    b.resource_type,
+    b.display_name,
+    b.display_name_plural,
+    b.unit,
+    b.currency,
+    b.current_usage,
+    b.usage_limit,
+    b.current_overages,
+    b.overage_cap,
+    b.overage_rate,
+    b.overage_charges,
+    b.next_date_reset,
+    b.model_name,
+    b.remaining,
+    b.remaining_percent,
+    b.reset_time,
+    b.reset_time_raw,
+    b.rate_limit_allowed,
+    b.rate_limit_reached,
+    b.primary_limit_window_seconds,
+    b.primary_reset_after_seconds,
+    b.primary_reset_at,
+    b.primary_used_percent,
+    b.secondary_limit_window_seconds,
+    b.secondary_reset_after_seconds,
+    b.secondary_reset_at,
+    b.secondary_used_percent,
+    i.instance_order
+FROM usage_snapshot_breakdowns b
+INNER JOIN usage_snapshot_instances i ON i.id = b.instance_id
+WHERE b.instance_id IN (${instanceIdsSql})
+ORDER BY i.instance_order ASC, b.breakdown_order ASC, b.id ASC;
+                `)
+                : [];
+            freeTrialRows = breakdownRows.length > 0
+                ? await this.client.query(`
+SELECT
+    f.id,
+    f.breakdown_id,
+    f.status,
+    f.current_usage,
+    f.usage_limit,
+    f.expires_at
+FROM usage_snapshot_free_trials f
+INNER JOIN usage_snapshot_breakdowns b ON b.id = f.breakdown_id
+WHERE b.instance_id IN (${instanceIdsSql});
+                `)
+                : [];
+            bonusRows = breakdownRows.length > 0
+                ? await this.client.query(`
+SELECT
+    bo.id,
+    bo.breakdown_id,
+    bo.bonus_order,
+    bo.code,
+    bo.display_name,
+    bo.description,
+    bo.status,
+    bo.current_usage,
+    bo.usage_limit,
+    bo.redeemed_at,
+    bo.expires_at,
+    i.instance_order,
+    b.breakdown_order
+FROM usage_snapshot_bonuses bo
+INNER JOIN usage_snapshot_breakdowns b ON b.id = bo.breakdown_id
+INNER JOIN usage_snapshot_instances i ON i.id = b.instance_id
+WHERE b.instance_id IN (${instanceIdsSql})
+ORDER BY i.instance_order ASC, b.breakdown_order ASC, bo.bonus_order ASC, bo.id ASC;
+                `)
+                : [];
+        } else {
+            breakdownRows = await this.client.query(`
 SELECT
     b.id,
     b.instance_id,
@@ -2733,10 +2901,9 @@ FROM usage_snapshot_breakdowns b
 INNER JOIN usage_snapshot_instances i ON i.id = b.instance_id
 WHERE i.snapshot_id = ${sqlValue(row.id)}
 ORDER BY i.instance_order ASC, b.breakdown_order ASC, b.id ASC;
-        `);
-
-        const freeTrialRows = breakdownRows.length > 0
-            ? await this.client.query(`
+            `);
+            freeTrialRows = breakdownRows.length > 0
+                ? await this.client.query(`
 SELECT
     f.id,
     f.breakdown_id,
@@ -2748,11 +2915,10 @@ FROM usage_snapshot_free_trials f
 INNER JOIN usage_snapshot_breakdowns b ON b.id = f.breakdown_id
 INNER JOIN usage_snapshot_instances i ON i.id = b.instance_id
 WHERE i.snapshot_id = ${sqlValue(row.id)};
-            `)
-            : [];
-
-        const bonusRows = breakdownRows.length > 0
-            ? await this.client.query(`
+                `)
+                : [];
+            bonusRows = breakdownRows.length > 0
+                ? await this.client.query(`
 SELECT
     bo.id,
     bo.breakdown_id,
@@ -2772,8 +2938,9 @@ INNER JOIN usage_snapshot_breakdowns b ON b.id = bo.breakdown_id
 INNER JOIN usage_snapshot_instances i ON i.id = b.instance_id
 WHERE i.snapshot_id = ${sqlValue(row.id)}
 ORDER BY i.instance_order ASC, b.breakdown_order ASC, bo.bonus_order ASC, bo.id ASC;
-            `)
-            : [];
+                `)
+                : [];
+        }
 
         const freeTrialByBreakdownId = new Map(
             freeTrialRows.map((freeTrialRow) => [freeTrialRow.breakdown_id, freeTrialRow])
@@ -2800,13 +2967,13 @@ ORDER BY i.instance_order ASC, b.breakdown_order ASC, bo.bonus_order ASC, bo.id 
             );
         }
 
-        return {
+        return applyUsageSnapshotPageMeta({
             ...summary,
             instances: instanceRows.map((instanceRow) => buildUsageInstanceFromStructuredRow(
                 instanceRow,
                 breakdownsByInstanceId.get(instanceRow.id) || []
             ))
-        };
+        }, pageMeta);
     }
 
     #scheduleAdminSessionTouch(sessionId, lastSeenAt = null) {

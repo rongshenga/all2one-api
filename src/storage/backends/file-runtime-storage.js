@@ -355,9 +355,38 @@ export class FileRuntimeStorage {
         return usageCache;
     }
 
-    async loadProviderUsageSnapshot(providerType) {
+    async loadProviderUsageSnapshot(providerType, options = {}) {
         const usageCache = await this.loadUsageCacheSnapshot();
-        return usageCache?.providers?.[providerType] || null;
+        const snapshot = usageCache?.providers?.[providerType] || null;
+        if (!snapshot) {
+            return null;
+        }
+
+        const rawPage = Number.parseInt(options?.page, 10);
+        const rawLimit = Number.parseInt(options?.limit, 10);
+        if (!Number.isFinite(rawPage) && !Number.isFinite(rawLimit)) {
+            return snapshot;
+        }
+
+        const instances = Array.isArray(snapshot.instances) ? snapshot.instances : [];
+        const availableCount = Number.isFinite(snapshot.availableCount)
+            ? Number(snapshot.availableCount)
+            : (Number.isFinite(snapshot.processedCount) ? Number(snapshot.processedCount) : instances.length);
+        const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 100;
+        const totalPages = Math.max(1, Math.ceil(Math.max(availableCount, 1) / limit));
+        const page = Math.min(Math.max(1, Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1), totalPages);
+        const offset = (page - 1) * limit;
+
+        return {
+            ...snapshot,
+            instances: instances.slice(offset, offset + limit),
+            availableCount,
+            page,
+            limit,
+            totalPages,
+            hasPrevPage: page > 1,
+            hasNextPage: page < totalPages
+        };
     }
 
     async upsertProviderUsageSnapshot(providerType, snapshot) {

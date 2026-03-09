@@ -119,6 +119,51 @@ function normalizeProviderUsage(providerType, usageData = {}, fallbackTimestamp 
     };
 }
 
+function normalizeProviderUsagePageOptions(options = {}) {
+    const rawPage = Number.parseInt(options?.page, 10);
+    const rawLimit = Number.parseInt(options?.limit, 10);
+    if (!Number.isFinite(rawPage) && !Number.isFinite(rawLimit)) {
+        return null;
+    }
+
+    return {
+        page: Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1,
+        limit: Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 100
+    };
+}
+
+function paginateProviderUsage(usageData = {}, pageQuery = null) {
+    if (!pageQuery) {
+        return usageData;
+    }
+
+    const existingLimit = Number(usageData?.limit || 0);
+    const existingPage = Number(usageData?.page || 0);
+    const existingAvailableCount = Number(usageData?.availableCount);
+    if (existingLimit > 0 && existingPage > 0 && Number.isFinite(existingAvailableCount)) {
+        return usageData;
+    }
+
+    const instances = Array.isArray(usageData?.instances) ? usageData.instances : [];
+    const availableCount = Number.isFinite(usageData?.availableCount)
+        ? Number(usageData.availableCount)
+        : (Number.isFinite(usageData?.processedCount) ? Number(usageData.processedCount) : instances.length);
+    const totalPages = Math.max(1, Math.ceil(Math.max(availableCount, 1) / pageQuery.limit));
+    const page = Math.min(Math.max(1, Number(pageQuery.page || 1)), totalPages);
+    const offset = (page - 1) * pageQuery.limit;
+
+    return {
+        ...usageData,
+        instances: instances.slice(offset, offset + pageQuery.limit),
+        availableCount,
+        page,
+        limit: pageQuery.limit,
+        totalPages,
+        hasPrevPage: page > 1,
+        hasNextPage: page < totalPages
+    };
+}
+
 function normalizeUsageCache(cache) {
     if (!cache || typeof cache !== 'object') {
         return createEmptyUsageCache();
@@ -328,17 +373,22 @@ export async function writeUsageCache(usageData) {
     }
 }
 
-export async function readProviderUsageCache(providerType) {
+export async function readProviderUsageCache(providerType, options = {}) {
+    const pageQuery = normalizeProviderUsagePageOptions(options);
     const runtimeStorage = getUsageStorage();
     if (runtimeStorage && typeof runtimeStorage.loadProviderUsageSnapshot === 'function') {
         try {
-            const snapshot = await runtimeStorage.loadProviderUsageSnapshot(providerType);
+            const snapshot = await runtimeStorage.loadProviderUsageSnapshot(providerType, pageQuery || undefined);
             if (snapshot) {
-                const providerUsage = normalizeProviderUsage(providerType, snapshot, snapshot.timestamp || null);
+                const providerUsage = paginateProviderUsage(
+                    normalizeProviderUsage(providerType, snapshot, snapshot.timestamp || null),
+                    pageQuery
+                );
                 return {
                     ...providerUsage,
                     cachedAt: providerUsage.timestamp,
-                    fromCache: true
+                    fromCache: true,
+                    __pageApplied: pageQuery !== null
                 };
             }
             if (shouldDisableUsageFileFallback(runtimeStorage)) {
@@ -354,11 +404,15 @@ export async function readProviderUsageCache(providerType) {
 
     const cache = await readUsageCache();
     if (cache && cache.providers && cache.providers[providerType]) {
-        const providerUsage = normalizeProviderUsage(providerType, cache.providers[providerType], cache.timestamp);
+        const providerUsage = paginateProviderUsage(
+            normalizeProviderUsage(providerType, cache.providers[providerType], cache.timestamp),
+            pageQuery
+        );
         return {
             ...providerUsage,
             cachedAt: providerUsage.timestamp,
-            fromCache: true
+            fromCache: true,
+            __pageApplied: pageQuery !== null
         };
     }
     return null;

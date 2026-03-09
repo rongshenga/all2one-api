@@ -596,6 +596,93 @@ describe('Usage API Refresh Cache Strategy', () => {
         expect(seenOptions[0].signal.aborted).toBe(true);
     });
 
+    test('should paginate cached provider usage detail responses', async () => {
+        const providerType = 'gemini-cli-oauth';
+        const providers = buildProviderPool('gemini', 3);
+
+        mockReadProviderUsageCache.mockResolvedValue({
+            providerType,
+            totalCount: 3,
+            successCount: 3,
+            errorCount: 0,
+            processedCount: 3,
+            timestamp: '2026-03-06T10:00:00.000Z',
+            instances: [
+                { uuid: 'gemini-0', name: 'Gemini-0', success: true, usage: { usageBreakdown: [] } },
+                { uuid: 'gemini-1', name: 'Gemini-1', success: true, usage: { usageBreakdown: [] } },
+                { uuid: 'gemini-2', name: 'Gemini-2', success: true, usage: { usageBreakdown: [] } }
+            ]
+        });
+
+        const req = {
+            url: `/api/usage/${encodeURIComponent(providerType)}?page=2&limit=1`,
+            headers: {
+                host: 'localhost:3000'
+            }
+        };
+        const res = createMockRes();
+        const currentConfig = {
+            providerPools: {
+                [providerType]: providers
+            }
+        };
+        const providerPoolManager = {
+            providerPools: {
+                [providerType]: providers
+            }
+        };
+
+        const handled = await handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+
+        const payload = JSON.parse(res.body);
+        expect(mockReadProviderUsageCache).toHaveBeenCalledWith(providerType, expect.objectContaining({
+            page: 2,
+            limit: 1
+        }));
+        expect(payload.page).toBe(2);
+        expect(payload.limit).toBe(1);
+        expect(payload.totalPages).toBe(3);
+        expect(payload.availableCount).toBe(3);
+        expect(payload.instances).toHaveLength(1);
+        expect(payload.instances[0].uuid).toBe('gemini-1');
+    });
+
+    test('should switch large uncached provider detail requests to async task', async () => {
+        const providerType = 'openai-codex-oauth';
+        const providers = buildProviderPool('codex', 600);
+
+        mockReadProviderUsageCache.mockResolvedValue(null);
+
+        const req = {
+            url: `/api/usage/${encodeURIComponent(providerType)}?page=1&limit=100`,
+            headers: {
+                host: 'localhost:3000'
+            }
+        };
+        const res = createMockRes();
+        const currentConfig = {
+            providerPools: {
+                [providerType]: providers
+            },
+            USAGE_QUERY_CONCURRENCY_PER_PROVIDER: 64
+        };
+        const providerPoolManager = {
+            providerPools: {
+                [providerType]: providers
+            }
+        };
+
+        const handled = await handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(202);
+
+        const payload = JSON.parse(res.body);
+        expect(payload.providerType).toBe(providerType);
+        expect(payload.taskId).toBeTruthy();
+    });
+
     test('should cap gemini cli usage refresh concurrency to provider-specific limit', async () => {
         const providerType = 'gemini-cli-oauth';
         const providers = buildProviderPool('gemini', 5);

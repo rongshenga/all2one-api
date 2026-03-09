@@ -130,6 +130,57 @@ describe('Usage runtime storage integration', () => {
         });
     });
 
+    test('should read paginated provider usage cache from sqlite-backed runtime storage', async () => {
+        const tempDir = await createTempDir('usage-runtime-storage-page-');
+        const dbPath = path.join(tempDir, 'runtime.sqlite');
+        const config = {
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: dbPath,
+            PROVIDER_POOLS_FILE_PATH: path.join(tempDir, 'provider_pools.json')
+        };
+
+        await initializeRuntimeStorage(config);
+        await writeUsageCache({
+            timestamp: '2026-03-09T11:00:00.000Z',
+            providers: {
+                'openai-codex-oauth': {
+                    providerType: 'openai-codex-oauth',
+                    timestamp: '2026-03-09T11:00:00.000Z',
+                    totalCount: 5,
+                    successCount: 5,
+                    errorCount: 0,
+                    processedCount: 5,
+                    instances: Array.from({ length: 5 }, (_, index) => ({
+                        uuid: `codex-${index + 1}`,
+                        name: `Codex ${index + 1}`,
+                        success: true,
+                        usage: { usageBreakdown: [] },
+                        lastRefreshedAt: '2026-03-09T11:00:00.000Z'
+                    }))
+                }
+            }
+        });
+
+        const pagedProviderCache = await readProviderUsageCache('openai-codex-oauth', {
+            page: 2,
+            limit: 2
+        });
+
+        expect(pagedProviderCache).toMatchObject({
+            providerType: 'openai-codex-oauth',
+            totalCount: 5,
+            availableCount: 5,
+            page: 2,
+            limit: 2,
+            totalPages: 3,
+            hasPrevPage: true,
+            hasNextPage: true,
+            fromCache: true
+        });
+        expect(pagedProviderCache.instances).toHaveLength(2);
+        expect(pagedProviderCache.instances.map((instance) => instance.uuid)).toEqual(['codex-3', 'codex-4']);
+    });
+
     test('should expose persisted usage refresh task status through usage API after restart', async () => {
         const tempDir = await createTempDir('usage-task-runtime-storage-');
         const dbPath = path.join(tempDir, 'runtime.sqlite');

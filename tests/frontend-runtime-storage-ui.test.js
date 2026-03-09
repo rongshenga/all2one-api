@@ -472,7 +472,7 @@ describe('frontend event stream and usage manager', () => {
                     })
                 };
             }
-            if (String(url) === '/api/usage/gemini-cli-oauth') {
+            if (String(url) === '/api/usage/gemini-cli-oauth?page=1&limit=100') {
                 return {
                     ok: true,
                     status: 200,
@@ -511,7 +511,7 @@ describe('frontend event stream and usage manager', () => {
         const titleDiv = header.querySelector('.usage-group-title');
         await titleDiv.trigger('click');
 
-        expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth');
+        expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth?page=1&limit=100');
         expect(groupContainer.dataset.detailsLoaded).toBe('true');
 
         const content = groupContainer.querySelector('.usage-group-content');
@@ -722,7 +722,7 @@ describe('frontend event stream and usage manager', () => {
                 };
             }
 
-            if (String(url) === '/api/usage/gemini-cli-oauth') {
+            if (String(url) === '/api/usage/gemini-cli-oauth?page=1&limit=100') {
                 return {
                     ok: true,
                     status: 200,
@@ -780,7 +780,7 @@ describe('frontend event stream and usage manager', () => {
 
         await usageManagerModule.refreshProviderUsage('gemini-cli-oauth');
 
-        expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth');
+        expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth?page=1&limit=100');
         expect(fetchCalls.filter((url) => url === '/api/usage')).toHaveLength(2);
 
         const refreshedGroup = usageContent.children[0];

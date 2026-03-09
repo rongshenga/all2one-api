@@ -27,6 +27,8 @@ const DEFAULT_PROVIDER_USAGE_CACHE_READ_TIMEOUT_MS = 5000;
 const DEFAULT_PROVIDER_USAGE_INSTANCE_TIMEOUT_MS = 30000;
 const DEFAULT_USAGE_SYNC_QUERY_MAX_PROVIDER_COUNT = 500;
 const DEFAULT_USAGE_TASK_PERSIST_INTERVAL_MS = 1000;
+const DEFAULT_PROVIDER_USAGE_PAGE_LIMIT = 100;
+const MAX_PROVIDER_USAGE_PAGE_LIMIT = 500;
 const usageRefreshTasks = new Map();
 const usageRefreshTaskPersistState = new Map();
 
@@ -360,6 +362,48 @@ function parseBoolean(value) {
 
     const normalized = value.trim().toLowerCase();
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function parseProviderUsagePageQuery(url) {
+    const rawPage = parsePositiveInt(url?.searchParams?.get('page'));
+    const rawLimit = parsePositiveInt(url?.searchParams?.get('limit'));
+
+    const page = Math.max(1, rawPage || 1);
+    const limit = Math.min(Math.max(1, rawLimit || DEFAULT_PROVIDER_USAGE_PAGE_LIMIT), MAX_PROVIDER_USAGE_PAGE_LIMIT);
+
+    return {
+        page,
+        limit,
+        offset: (page - 1) * limit
+    };
+}
+
+function paginateProviderUsageResult(result = {}, pageQuery = null) {
+    if (!pageQuery) {
+        return result;
+    }
+
+    const instances = Array.isArray(result?.instances) ? result.instances : [];
+    const availableCount = instances.length;
+    const totalPages = Math.max(1, Math.ceil(Math.max(availableCount, 1) / pageQuery.limit));
+    const normalizedPage = Math.min(pageQuery.page, totalPages);
+    const offset = (normalizedPage - 1) * pageQuery.limit;
+
+    return {
+        ...result,
+        instances: instances.slice(offset, offset + pageQuery.limit),
+        page: normalizedPage,
+        limit: pageQuery.limit,
+        totalPages,
+        hasPrevPage: normalizedPage > 1,
+        hasNextPage: normalizedPage < totalPages,
+        availableCount
+    };
+}
+
+function shouldBootstrapProviderUsageAsync(providerType, currentConfig, providerPoolManager) {
+    const providers = getProvidersForType(providerType, currentConfig, providerPoolManager);
+    return providers.length > resolveUsageSyncQueryMaxProviderCount(currentConfig);
 }
 
 /**
@@ -1758,6 +1802,7 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
         const useAsyncTask = parseBoolean(url.searchParams.get('async'));
         const groupSize = parsePositiveInt(url.searchParams.get('groupSize'));
         const groupMinPoolSize = parsePositiveInt(url.searchParams.get('groupMinPoolSize'));
+        const pageQuery = parseProviderUsagePageQuery(url);
 
         logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} started`, {
             providerType,
@@ -1765,7 +1810,9 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
             useAsyncTask,
             usageConcurrency,
             groupSize,
-            groupMinPoolSize
+            groupMinPoolSize,
+            page: pageQuery.page,
+            limit: pageQuery.limit
         });
 
         if (refresh && useAsyncTask) {
@@ -1794,11 +1841,12 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
         }
         
         let usageResults;
+        let cachePaginationApplied = false;
         
         if (!refresh) {
             // Prefer reading from cache
             const cacheLookupStartedAt = Date.now();
-            const cachedData = await readProviderUsageCache(providerType);
+            const cachedData = await readProviderUsageCache(providerType, pageQuery);
             logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} cache lookup completed`, {
                 providerType,
                 hit: Boolean(cachedData),
@@ -1806,7 +1854,31 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
             });
             if (cachedData) {
                 logger.debug(`[Usage API] Returning cached usage data for ${providerType}`);
-                usageResults = { ...cachedData, fromCache: true };
+                cachePaginationApplied = cachedData.__pageApplied === true;
+                const { __pageApplied, ...normalizedCachedData } = cachedData;
+                usageResults = { ...normalizedCachedData, fromCache: true };
+            } else if (shouldBootstrapProviderUsageAsync(providerType, currentConfig, providerPoolManager)) {
+                const task = startProviderUsageRefreshTask(currentConfig, providerPoolManager, providerType, {
+                    usageConcurrency,
+                    groupSize,
+                    groupMinPoolSize
+                });
+                logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} cache miss switched to async task`, {
+                    providerType,
+                    taskId: task.id,
+                    pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
+                    durationMs: Date.now() - startedAt
+                }, 'warn');
+                res.writeHead(202, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    taskId: task.id,
+                    status: task.status,
+                    type: task.type,
+                    providerType,
+                    pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
+                    progress: task.progress
+                }));
+                return true;
             }
         }
         
@@ -1842,8 +1914,11 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
         }
         
         // Always include current server time
+        const finalUsageResults = cachePaginationApplied
+            ? usageResults
+            : paginateProviderUsageResult(usageResults, pageQuery);
         const finalResults = {
-            ...usageResults,
+            ...finalUsageResults,
             serverTime: new Date().toISOString()
         };
 
