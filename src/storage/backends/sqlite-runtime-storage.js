@@ -1395,6 +1395,7 @@ export class SqliteRuntimeStorage {
         this.config = config;
         this.dbPath = config.RUNTIME_STORAGE_DB_PATH || 'configs/runtime/runtime-storage.sqlite';
         this.filePath = config.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+        this.legacyFileBridgeEnabled = config.RUNTIME_STORAGE_ENABLE_LEGACY_FILE_BRIDGE === true;
         this.compatExportPageSize = normalizePositiveInt(config.RUNTIME_STORAGE_COMPAT_EXPORT_PAGE_SIZE, 1000);
         this.startupRestorePageSize = normalizePositiveInt(config.RUNTIME_STORAGE_STARTUP_RESTORE_PAGE_SIZE, 2000);
         this.client = new SqliteCliClient(this.dbPath, {
@@ -1403,7 +1404,7 @@ export class SqliteRuntimeStorage {
             maxRetryAttempts: config.RUNTIME_STORAGE_DB_RETRY_ATTEMPTS ?? 2,
             retryDelayMs: config.RUNTIME_STORAGE_DB_RETRY_DELAY_MS ?? 75
         });
-        this.fileStorage = new FileRuntimeStorage(config);
+        this.fileStorage = this.legacyFileBridgeEnabled ? new FileRuntimeStorage(config) : null;
         this.kind = 'db';
         this.initialized = false;
         const configuredAdminSessionTouchIntervalMs = Number.parseInt(config.RUNTIME_STORAGE_ADMIN_SESSION_TOUCH_INTERVAL_MS, 10);
@@ -1457,7 +1458,7 @@ ON CONFLICT(meta_key) DO UPDATE SET
         await this.initialize();
 
         const hasData = await this.hasProviderData();
-        const autoImportFromFile = options.autoImportFromFile !== false;
+        const autoImportFromFile = this.legacyFileBridgeEnabled && options.autoImportFromFile !== false;
         const importFilePath = options.filePath || this.filePath;
         const importMarkerKey = LEGACY_IMPORT_MARKERS.providerPools;
 
@@ -1490,7 +1491,7 @@ ON CONFLICT(meta_key) DO UPDATE SET
         await this.initialize();
 
         const hasData = await this.hasProviderData();
-        const autoImportFromFile = options.autoImportFromFile !== false;
+        const autoImportFromFile = this.legacyFileBridgeEnabled && options.autoImportFromFile !== false;
         const importFilePath = options.filePath || this.filePath;
         const importMarkerKey = LEGACY_IMPORT_MARKERS.providerPools;
 
@@ -2685,6 +2686,9 @@ WHERE provider_id IS NULL;
             await this.#ensureLegacyImportMarker(importMarkerKey, 'existing_data');
             return snapshotCount;
         }
+        if (!this.legacyFileBridgeEnabled || !this.fileStorage) {
+            return 0;
+        }
 
         const legacyImportMarked = await this.#hasLegacyImportMarker(importMarkerKey);
         if (legacyImportMarked) {
@@ -3421,6 +3425,9 @@ ON CONFLICT(scope, key) DO UPDATE SET
     }
 
     async #importLegacyAdminSessionsIfNeeded() {
+        if (!this.legacyFileBridgeEnabled) {
+            return;
+        }
         const countRows = await this.client.query('SELECT COUNT(*) AS count FROM admin_sessions;');
         const importMarkerKey = LEGACY_IMPORT_MARKERS.adminSessions;
         if (Number(countRows[0]?.count || 0) > 0) {
@@ -3476,6 +3483,9 @@ INSERT INTO admin_sessions (
     }
 
     async #importLegacyPotluckUserDataIfNeeded() {
+        if (!this.legacyFileBridgeEnabled || !this.fileStorage) {
+            return;
+        }
         const userCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_users;');
         const configCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_config;');
         const importMarkerKey = LEGACY_IMPORT_MARKERS.potluckUserData;
@@ -3500,6 +3510,9 @@ INSERT INTO admin_sessions (
     }
 
     async #importLegacyPotluckKeyStoreIfNeeded() {
+        if (!this.legacyFileBridgeEnabled || !this.fileStorage) {
+            return;
+        }
         const keyCountRows = await this.client.query('SELECT COUNT(*) AS count FROM potluck_api_keys;');
         const importMarkerKey = LEGACY_IMPORT_MARKERS.potluckKeyStore;
         if (Number(keyCountRows[0]?.count || 0) > 0) {

@@ -14,6 +14,7 @@ export function getRuntimeStorageDefaults() {
         RUNTIME_STORAGE_DB_PATH: 'configs/runtime/runtime-storage.sqlite',
         RUNTIME_STORAGE_AUTO_IMPORT_PROVIDER_POOLS: true,
         RUNTIME_STORAGE_FALLBACK_TO_FILE: true,
+        RUNTIME_STORAGE_ENABLE_LEGACY_FILE_BRIDGE: false,
         RUNTIME_STORAGE_DB_BUSY_TIMEOUT_MS: 5000,
         RUNTIME_STORAGE_DB_RETRY_ATTEMPTS: 2,
         RUNTIME_STORAGE_DB_RETRY_DELAY_MS: 75,

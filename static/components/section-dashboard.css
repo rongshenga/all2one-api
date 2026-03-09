@@ -128,6 +128,39 @@
     margin-bottom: 1.5rem;
 }
 
+.models-actions {
+    margin-top: 0.75rem;
+}
+
+.models-action-btn {
+    border: 1px solid var(--primary-color);
+    background: var(--primary-10);
+    color: var(--primary-color);
+    padding: 0.5rem 0.875rem;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: var(--transition);
+}
+
+.models-action-btn:hover:not(:disabled) {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.models-action-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.models-action-btn.loading i {
+    animation: spin 1s linear infinite;
+}
+
 /* 模型容器 */
 .models-container {
     background: var(--bg-secondary);
@@ -288,6 +321,39 @@
     word-break: break-all;
 }
 
+.model-item-status {
+    flex-shrink: 0;
+    font-size: 0.68rem;
+    line-height: 1;
+    padding: 0.22rem 0.38rem;
+    border-radius: 9999px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.model-item-test-btn {
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.model-item-test-btn:hover {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+    background: var(--primary-10);
+}
+
 .model-item-copy {
     display: flex;
     align-items: center;
@@ -326,6 +392,39 @@
     background: var(--success-color);
     opacity: 0.1;
     animation: copyFlash 0.3s ease-out;
+}
+
+.model-item.is-testing {
+    border-color: var(--primary-color);
+    background: var(--primary-10);
+}
+
+.model-item.is-testing .model-item-status {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #2563eb;
+}
+
+.model-item.is-success {
+    border-color: var(--success-color);
+    background: var(--success-10);
+}
+
+.model-item.is-success .model-item-status {
+    background: rgba(16, 185, 129, 0.16);
+    border-color: rgba(16, 185, 129, 0.35);
+    color: var(--success-color);
+}
+
+.model-item.is-failed {
+    border-color: var(--danger-color);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.model-item.is-failed .model-item-status {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: var(--danger-color);
 }
 
 @keyframes copyFlash {

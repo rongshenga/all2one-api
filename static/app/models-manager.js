@@ -11,6 +11,11 @@ let modelsCache = null;
 // 提供商配置缓存
 let currentProviderConfigs = null;
 
+// 模型模拟请求状态缓存
+const modelSimulationState = new Map();
+let simulationRunning = false;
+let requiredApiKeyCache = null;
+
 /**
  * 更新提供商配置
  * @param {Array} configs - 提供商配置列表
@@ -158,11 +163,20 @@ function renderModelsList(models) {
                 </div>
                 <div class="provider-models-content" id="models-${providerType}">
                     ${modelList.map(model => `
-                        <div class="model-item" onclick="window.copyModelName('${escapeHtml(model)}', this)" title="${t('models.clickToCopy') || '点击复制'}">
+                        <div class="model-item ${getModelStateClass(providerType, model)}"
+                            onclick="window.copyModelName('${escapeJsString(model)}', this)"
+                            title="${escapeHtml(getModelItemTitle(providerType, model))}">
                             <div class="model-item-icon">
                                 <i class="fas fa-cube"></i>
                             </div>
                             <span class="model-item-name">${escapeHtml(model)}</span>
+                            <span class="model-item-status">${escapeHtml(getModelStatusText(providerType, model))}</span>
+                            <button class="model-item-test-btn"
+                                type="button"
+                                onclick="window.simulateSingleModelRequest('${escapeJsString(providerType)}', '${escapeJsString(model)}', event)"
+                                title="${t('models.simulateSingle') || '模拟请求'}">
+                                <i class="${getModelTestButtonIcon(providerType, model)}"></i>
+                            </button>
                             <div class="model-item-copy">
                                 <i class="fas fa-copy"></i>
                             </div>
@@ -242,6 +256,264 @@ function escapeHtml(text) {
 }
 
 /**
+ * JS 字符串转义（用于内联事件参数）
+ * @param {string} text - 原始文本
+ * @returns {string} 转义后的文本
+ */
+function escapeJsString(text) {
+    return String(text)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
+}
+
+function getModelStateKey(providerType, modelName) {
+    return `${providerType}::${modelName}`;
+}
+
+function getModelState(providerType, modelName) {
+    return modelSimulationState.get(getModelStateKey(providerType, modelName)) || null;
+}
+
+function setModelState(providerType, modelName, state) {
+    modelSimulationState.set(getModelStateKey(providerType, modelName), state);
+}
+
+function getModelStateClass(providerType, modelName) {
+    const state = getModelState(providerType, modelName);
+    if (!state || !state.status) return '';
+    if (state.status === 'loading') return 'is-testing';
+    if (state.status === 'success') return 'is-success';
+    if (state.status === 'failed') return 'is-failed';
+    return '';
+}
+
+function getModelStatusText(providerType, modelName) {
+    const state = getModelState(providerType, modelName);
+    if (!state || !state.status) return t('models.statusIdle') || '未校验';
+    if (state.status === 'loading') return t('models.statusLoading') || '检测中...';
+    if (state.status === 'success') return t('models.statusSuccess') || '可用';
+    if (state.status === 'failed') return t('models.statusFailed') || '失败';
+    return t('models.statusIdle') || '未校验';
+}
+
+function getModelTestButtonIcon(providerType, modelName) {
+    const state = getModelState(providerType, modelName);
+    if (!state || state.status !== 'loading') return 'fas fa-paper-plane';
+    return 'fas fa-spinner fa-spin';
+}
+
+function getModelItemTitle(providerType, modelName) {
+    const baseText = t('models.clickToCopy') || '点击复制';
+    const state = getModelState(providerType, modelName);
+    if (!state) return baseText;
+
+    const details = [];
+    if (state.endpoint) details.push(`Endpoint: ${state.endpoint}`);
+    if (state.method) details.push(`Method: ${state.method}`);
+    if (state.durationMs !== undefined) details.push(`Duration: ${state.durationMs}ms`);
+    if (state.httpStatus !== undefined) details.push(`HTTP: ${state.httpStatus}`);
+    if (state.errorMessage) details.push(`Error: ${state.errorMessage}`);
+    if (state.requestBody) details.push(`Body: ${state.requestBody}`);
+
+    if (details.length === 0) return baseText;
+    return `${baseText}\n${details.join('\n')}`;
+}
+
+function getModelRequestConfig(providerType, modelName) {
+    if (providerType === 'openaiResponses-custom') {
+        return {
+            endpoint: `/${providerType}/v1/responses`,
+            method: 'POST',
+            body: {
+                model: modelName,
+                input: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'input_text',
+                                text: 'ping'
+                            }
+                        ]
+                    }
+                ],
+                max_output_tokens: 12
+            }
+        };
+    }
+
+    return {
+        endpoint: `/${providerType}/v1/chat/completions`,
+        method: 'POST',
+        body: {
+            model: modelName,
+            messages: [
+                {
+                    role: 'user',
+                    content: 'ping'
+                }
+            ],
+            max_tokens: 12,
+            temperature: 0,
+            stream: false
+        }
+    };
+}
+
+async function getRequiredApiKey() {
+    if (requiredApiKeyCache !== null) {
+        return requiredApiKeyCache;
+    }
+
+    const config = await window.apiClient.get('/config');
+    requiredApiKeyCache = config?.REQUIRED_API_KEY || '';
+    return requiredApiKeyCache;
+}
+
+async function parseResponseError(response) {
+    try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const data = await response.json();
+            return data?.error?.message || JSON.stringify(data);
+        }
+        const text = await response.text();
+        return text || `HTTP ${response.status}`;
+    } catch (error) {
+        return `HTTP ${response.status}`;
+    }
+}
+
+function updateSimulationButtonState() {
+    const allBtn = document.getElementById('simulateAllModelsBtn');
+    if (!allBtn) return;
+
+    allBtn.disabled = simulationRunning;
+    allBtn.classList.toggle('loading', simulationRunning);
+
+    const textEl = allBtn.querySelector('span');
+    if (textEl) {
+        textEl.textContent = simulationRunning
+            ? (t('models.simulateAllRunning') || '模拟请求中...')
+            : (t('models.simulateAll') || '模拟请求校验全部模型');
+    }
+}
+
+async function simulateModelRequest(providerType, modelName) {
+    const reqConfig = getModelRequestConfig(providerType, modelName);
+    setModelState(providerType, modelName, {
+        status: 'loading',
+        endpoint: reqConfig.endpoint,
+        method: reqConfig.method,
+        requestBody: JSON.stringify(reqConfig.body)
+    });
+    if (modelsCache) {
+        renderModelsList(modelsCache);
+    }
+
+    const startedAt = Date.now();
+
+    try {
+        const apiKey = await getRequiredApiKey();
+        const response = await fetch(reqConfig.endpoint, {
+            method: reqConfig.method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(reqConfig.body)
+        });
+
+        const durationMs = Date.now() - startedAt;
+        if (response.ok) {
+            setModelState(providerType, modelName, {
+                status: 'success',
+                endpoint: reqConfig.endpoint,
+                method: reqConfig.method,
+                requestBody: JSON.stringify(reqConfig.body),
+                httpStatus: response.status,
+                durationMs
+            });
+        } else {
+            const errorMessage = await parseResponseError(response);
+            setModelState(providerType, modelName, {
+                status: 'failed',
+                endpoint: reqConfig.endpoint,
+                method: reqConfig.method,
+                requestBody: JSON.stringify(reqConfig.body),
+                httpStatus: response.status,
+                durationMs,
+                errorMessage
+            });
+        }
+    } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        setModelState(providerType, modelName, {
+            status: 'failed',
+            endpoint: reqConfig.endpoint,
+            method: reqConfig.method,
+            requestBody: JSON.stringify(reqConfig.body),
+            durationMs,
+            errorMessage: error.message || 'Request failed'
+        });
+    }
+
+    if (modelsCache) {
+        renderModelsList(modelsCache);
+    }
+}
+
+async function simulateSingleModelRequest(providerType, modelName, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+
+    if (simulationRunning) {
+        return;
+    }
+
+    await simulateModelRequest(providerType, modelName);
+}
+
+async function simulateAllModelsRequest() {
+    if (simulationRunning) {
+        return;
+    }
+
+    if (!modelsCache) {
+        await initModelsManager();
+    }
+
+    if (!modelsCache) {
+        return;
+    }
+
+    simulationRunning = true;
+    updateSimulationButtonState();
+
+    try {
+        const providerTypes = Object.keys(modelsCache);
+        for (const providerType of providerTypes) {
+            if (currentProviderConfigs) {
+                const config = currentProviderConfigs.find(c => c.id === providerType);
+                if (config && config.visible === false) continue;
+            }
+
+            const modelList = modelsCache[providerType] || [];
+            for (const modelName of modelList) {
+                await simulateModelRequest(providerType, modelName);
+            }
+        }
+    } finally {
+        simulationRunning = false;
+        updateSimulationButtonState();
+    }
+}
+
+/**
  * 切换提供商模型列表的展开/折叠状态
  * @param {string} providerType - 提供商类型
  */
@@ -301,6 +573,15 @@ async function initModelsManager() {
     }
 }
 
+function bindModelSimulationEvents() {
+    const simulateAllBtn = document.getElementById('simulateAllModelsBtn');
+    if (simulateAllBtn && !simulateAllBtn.dataset.bound) {
+        simulateAllBtn.dataset.bound = '1';
+        simulateAllBtn.addEventListener('click', simulateAllModelsRequest);
+    }
+    updateSimulationButtonState();
+}
+
 /**
  * 刷新模型列表
  */
@@ -313,9 +594,12 @@ async function refreshModels() {
 window.toggleProviderModels = toggleProviderModels;
 window.copyModelName = copyModelName;
 window.refreshModels = refreshModels;
+window.simulateSingleModelRequest = simulateSingleModelRequest;
+window.simulateAllModelsRequest = simulateAllModelsRequest;
 
 // 监听组件加载完成事件
 window.addEventListener('componentsLoaded', () => {
+    bindModelSimulationEvents();
     initModelsManager();
 });
 
