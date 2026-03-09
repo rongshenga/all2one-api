@@ -1062,11 +1062,18 @@ async function openProviderManager(providerType) {
             limit: String(PROVIDER_MODAL_PAGE_LIMIT)
         });
         const data = await window.apiClient.get(`/providers/${encodeURIComponent(providerType)}?${query.toString()}`);
+        if (data?.error) {
+            throw new Error(data.error.message || t('modal.provider.load.failed'));
+        }
+        if (!data || typeof data !== 'object' || typeof data.providerType !== 'string') {
+            throw new Error(t('modal.provider.load.failed'));
+        }
         
         showProviderManagerModal(data);
     } catch (error) {
         console.error('Failed to load provider details:', error);
-        showToast(t('common.error'), t('modal.provider.load.failed'), 'error');
+        const errorMessage = error?.message ? `: ${error.message}` : '';
+        showToast(t('common.error'), `${t('modal.provider.load.failed')}${errorMessage}`, 'error');
     } finally {
         if (loadingTimer) {
             window.clearTimeout(loadingTimer);

@@ -2,6 +2,8 @@ node_modules
 .serena/
 .claude/
 CLAUDE.md
+.DS_Store
+**/.DS_Store
 config.json
 provider_pools.json
 plugins.json
@@ -19,6 +21,10 @@ docker/configs
 
 .ace-tool/
 logs/
+
+# Go build artifacts
+tls-sidecar/tls-sidecar
+tls-sidecar/tls-sidecar.exe
 
 configs/config.json
 configs/runtime/

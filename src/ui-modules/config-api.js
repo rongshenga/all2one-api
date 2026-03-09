@@ -62,6 +62,7 @@ const CONFIG_RESPONSE_KEYS = [
     'LOG_INCLUDE_TIMESTAMP',
     'LOG_MAX_FILE_SIZE',
     'LOG_MAX_FILES',
+    'UI_DEBUG_LOGGING',
     'TLS_SIDECAR_ENABLED',
     'TLS_SIDECAR_PORT',
     'TLS_SIDECAR_BINARY_PATH'
@@ -119,6 +120,7 @@ const CONFIG_PERSIST_KEYS = [
     'LOG_INCLUDE_TIMESTAMP',
     'LOG_MAX_FILE_SIZE',
     'LOG_MAX_FILES',
+    'UI_DEBUG_LOGGING',
     'TLS_SIDECAR_ENABLED',
     'TLS_SIDECAR_PORT',
     'TLS_SIDECAR_BINARY_PATH'
@@ -290,6 +292,7 @@ export async function handleUpdateConfig(req, res, currentConfig) {
         if (newConfig.LOG_INCLUDE_TIMESTAMP !== undefined) currentConfig.LOG_INCLUDE_TIMESTAMP = newConfig.LOG_INCLUDE_TIMESTAMP;
         if (newConfig.LOG_MAX_FILE_SIZE !== undefined) currentConfig.LOG_MAX_FILE_SIZE = newConfig.LOG_MAX_FILE_SIZE;
         if (newConfig.LOG_MAX_FILES !== undefined) currentConfig.LOG_MAX_FILES = newConfig.LOG_MAX_FILES;
+        if (newConfig.UI_DEBUG_LOGGING !== undefined) currentConfig.UI_DEBUG_LOGGING = newConfig.UI_DEBUG_LOGGING;
 
         // Handle system prompt update
         if (newConfig.systemPrompt !== undefined) {

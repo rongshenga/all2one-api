@@ -5,6 +5,12 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.org}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
+        NO_PROXY: ${DOCKER_NO_PROXY:-localhost,127.0.0.1}
     container_name: aiclient2api
     restart: unless-stopped
     ports:

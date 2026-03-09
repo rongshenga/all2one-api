@@ -39,7 +39,14 @@ function buildProviderPageUrl(providerType, page = 1) {
 }
 
 async function fetchProviderPage(providerType, page = 1) {
-    return await window.apiClient.get(buildProviderPageUrl(providerType, page));
+    const data = await window.apiClient.get(buildProviderPageUrl(providerType, page));
+    if (data?.error) {
+        throw new Error(data.error.message || t('modal.provider.load.failed'));
+    }
+    if (!data || typeof data !== 'object' || typeof data.providerType !== 'string') {
+        throw new Error(t('modal.provider.load.failed'));
+    }
+    return data;
 }
 
 function applyProviderModalPayload(data = {}, { resetFilter = false } = {}) {
@@ -205,6 +212,15 @@ function applyProviderHealthFilter(healthFilter = 'all', resetPage = true, scrol
  * @param {Object} data - 提供商数据
  */
 function showProviderManagerModal(data) {
+    if (data?.error) {
+        showToast(t('common.error'), data.error.message || t('modal.provider.load.failed'), 'error');
+        return;
+    }
+    if (!data || typeof data !== 'object' || typeof data.providerType !== 'string') {
+        showToast(t('common.error'), t('modal.provider.load.failed'), 'error');
+        return;
+    }
+
     const providerType = data?.providerType || '';
     applyProviderModalPayload(data, { resetFilter: true });
     cachedModels = [];
