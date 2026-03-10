@@ -376,7 +376,9 @@ function classifyProviderErrorType(provider = {}) {
     }
 
     if (/\b(401|403)\b/.test(message)
-        || /\b(unauthorized|forbidden|accessdenied|invalidtoken|expiredtoken)\b/i.test(message)) {
+        || /\b(unauthorized|forbidden|accessdenied|invalidtoken|expiredtoken|invalid[_-\s]?grant)\b/i.test(message)
+        || /\b(re-?authenticate|authentication\s+(failed|required)|login\s+required|not\s+authenticated)\b/i.test(message)
+        || /\b(refresh\s+token|token\s+refresh)\b/i.test(message)) {
         return 'auth';
     }
 

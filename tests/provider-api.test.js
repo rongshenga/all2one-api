@@ -248,7 +248,16 @@ describe('Provider API Summary', () => {
             { uuid: 'gemini-healthy', customName: 'Healthy', isHealthy: true, isDisabled: false, usageCount: 1, errorCount: 0 },
             { uuid: 'gemini-auth', customName: 'Auth Error', isHealthy: false, isDisabled: false, usageCount: 0, errorCount: 3, lastErrorMessage: '401 Unauthorized' },
             { uuid: 'gemini-timeout', customName: 'Timeout Error', isHealthy: false, isDisabled: false, usageCount: 0, errorCount: 2, lastErrorMessage: 'Request timeout' },
-            { uuid: 'gemini-unknown', customName: 'Unknown Error', isHealthy: false, isDisabled: false, usageCount: 0, errorCount: 1 }
+            { uuid: 'gemini-unknown', customName: 'Unknown Error', isHealthy: false, isDisabled: false, usageCount: 0, errorCount: 1 },
+            {
+                uuid: 'gemini-reauth',
+                customName: 'Reauth Required',
+                isHealthy: false,
+                isDisabled: false,
+                usageCount: 0,
+                errorCount: 4,
+                lastErrorMessage: 'Refresh failed: Failed to refresh Codex token. Please re-authenticate.'
+            }
         ];
         const providerPoolManager = {
             providerPools: {
@@ -263,8 +272,8 @@ describe('Provider API Summary', () => {
         const payload = JSON.parse(res.body);
         expect(payload.healthFilter).toBe('unhealthy');
         expect(payload.errorType).toBe('auth');
-        expect(payload.filteredCount).toBe(1);
-        expect(payload.returnedCount).toBe(1);
-        expect(payload.providers.map((item) => item.uuid)).toEqual(['gemini-auth']);
+        expect(payload.filteredCount).toBe(2);
+        expect(payload.returnedCount).toBe(2);
+        expect(payload.providers.map((item) => item.uuid)).toEqual(['gemini-auth', 'gemini-reauth']);
     });
 });

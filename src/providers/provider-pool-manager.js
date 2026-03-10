@@ -20,6 +20,9 @@ export class ProviderPoolManager {
     static DEFAULT_LARGE_POOL_THRESHOLD = 100000;
     static DEFAULT_COMPAT_EXPORT_PAGE_SIZE = 1000;
     static DEFAULT_STARTUP_RESTORE_PAGE_SIZE = 2000;
+    static DEFAULT_EXPIRY_SCAN_DB_FETCH_LIMIT = 2000;
+    static DEFAULT_EXPIRY_SCAN_MAX_ENQUEUE_TOTAL = 500;
+    static DEFAULT_EXPIRY_SCAN_MAX_ENQUEUE_PER_PROVIDER = 200;
 
     // 默认健康检查模型配置
     // 键名必须与 MODEL_PROVIDER 常量值一致
@@ -145,6 +148,21 @@ export class ProviderPoolManager {
         this.authSecretCacheTtlMs = this._normalizePositiveInt(
             groupConfig.AUTH_SECRET_CACHE_TTL_MS,
             300000
+        );
+        this.expiryScanEnabled = groupConfig.EXPIRY_SCAN_ENABLED !== undefined
+            ? Boolean(groupConfig.EXPIRY_SCAN_ENABLED)
+            : true;
+        this.expiryScanDbFetchLimit = this._normalizePositiveInt(
+            groupConfig.EXPIRY_SCAN_DB_FETCH_LIMIT,
+            ProviderPoolManager.DEFAULT_EXPIRY_SCAN_DB_FETCH_LIMIT
+        );
+        this.expiryScanMaxEnqueueTotal = this._normalizePositiveInt(
+            groupConfig.EXPIRY_SCAN_MAX_ENQUEUE_TOTAL,
+            ProviderPoolManager.DEFAULT_EXPIRY_SCAN_MAX_ENQUEUE_TOTAL
+        );
+        this.expiryScanMaxEnqueuePerProvider = this._normalizePositiveInt(
+            groupConfig.EXPIRY_SCAN_MAX_ENQUEUE_PER_PROVIDER,
+            ProviderPoolManager.DEFAULT_EXPIRY_SCAN_MAX_ENQUEUE_PER_PROVIDER
         );
         this._authSecretCache = new Map();
         this._authGroupPreloadQueue = [];
@@ -308,6 +326,10 @@ export class ProviderPoolManager {
                 largePoolThreshold: this.runtimeLargePoolThreshold,
                 compatExportPageSize: this.runtimeCompatExportPageSize,
                 startupRestorePageSize: this.runtimeStartupRestorePageSize,
+                expiryScanEnabled: this.expiryScanEnabled,
+                expiryScanDbFetchLimit: this.expiryScanDbFetchLimit,
+                expiryScanMaxEnqueueTotal: this.expiryScanMaxEnqueueTotal,
+                expiryScanMaxEnqueuePerProvider: this.expiryScanMaxEnqueuePerProvider,
                 startupPreloadMaxPerProvider: Number.isFinite(Number.parseInt(this.globalConfig?.STARTUP_PRELOAD_MAX_PER_PROVIDER, 10))
                     ? Math.max(0, Number.parseInt(this.globalConfig?.STARTUP_PRELOAD_MAX_PER_PROVIDER, 10))
                     : 20,
@@ -357,17 +379,23 @@ export class ProviderPoolManager {
      * 检查所有节点的配置文件，如果发现即将过期则触发刷新
      */
     async checkAndRefreshExpiringNodes() {
+        if (!this.expiryScanEnabled) {
+            this._log('info', 'Skipping expiry scan because EXPIRY_SCAN_ENABLED=false');
+            return;
+        }
+
         this._log('info', 'Checking nodes for approaching expiration dates using runtime storage index...');
         const summary = {
             total: 0,
             eligible: 0,
             nearExpiry: 0,
             enqueued: 0,
+            skippedByEnqueueLimit: 0,
             noCredentialFile: 0,
             unknownExpiry: 0,
             errors: 0,
         };
-        const nearExpiryByProvider = {};
+        const enqueuedByProvider = {};
         const allowFileFallback = this._resolveAuthStorageMode() === 'bridge';
         
         for (const providerType in this.providerStatus) {
@@ -409,8 +437,18 @@ export class ProviderPoolManager {
 
                 if (isNearExpiry) {
                     summary.nearExpiry++;
+                    const providerEnqueuedCount = enqueuedByProvider[providerType] || 0;
+                    const reachGlobalLimit = summary.enqueued >= this.expiryScanMaxEnqueueTotal;
+                    const reachProviderLimit = providerEnqueuedCount >= this.expiryScanMaxEnqueuePerProvider;
+
+                    if (reachGlobalLimit || reachProviderLimit) {
+                        summary.skippedByEnqueueLimit++;
+                        this._log('debug', `Skip refresh enqueue for ${providerStatus.uuid} (${providerType}) due to expiry scan limit.`);
+                        continue;
+                    }
+
                     summary.enqueued++;
-                    nearExpiryByProvider[providerType] = (nearExpiryByProvider[providerType] || 0) + 1;
+                    enqueuedByProvider[providerType] = providerEnqueuedCount + 1;
                     this._log('debug', `Node ${providerStatus.uuid} (${providerType}) is near expiration. Enqueuing refresh...`);
                     this._enqueueRefresh(providerType, providerStatus);
                 } else {
@@ -419,16 +457,24 @@ export class ProviderPoolManager {
             }
         }
 
-        const providerSummary = Object.entries(nearExpiryByProvider)
+        const providerSummary = Object.entries(enqueuedByProvider)
             .map(([providerType, count]) => `${providerType}:${count}`)
             .join(', ') || 'none';
 
         this._log('info',
             `Expiry scan summary: total=${summary.total}, eligible=${summary.eligible}, nearExpiry=${summary.nearExpiry}, ` +
-            `enqueued=${summary.enqueued}, noCredentialFile=${summary.noCredentialFile}, unknownExpiry=${summary.unknownExpiry}, errors=${summary.errors}`);
+            `enqueued=${summary.enqueued}, skippedByEnqueueLimit=${summary.skippedByEnqueueLimit}, ` +
+            `noCredentialFile=${summary.noCredentialFile}, unknownExpiry=${summary.unknownExpiry}, errors=${summary.errors}`);
         this._log('info', `Near-expiry accounts by provider: ${providerSummary}`);
         if (summary.nearExpiry > 0) {
-            this._log('warn', `Detected ${summary.nearExpiry} near-expiry account(s); refresh tasks enqueued in background.`);
+            this._log(
+                'warn',
+                `Detected ${summary.nearExpiry} near-expiry account(s); enqueued=${summary.enqueued} ` +
+                `(limits: total=${this.expiryScanMaxEnqueueTotal}, perProvider=${this.expiryScanMaxEnqueuePerProvider}).`
+            );
+        }
+        if (summary.skippedByEnqueueLimit > 0) {
+            this._log('warn', `Skipped ${summary.skippedByEnqueueLimit} near-expiry account(s) due to enqueue limits.`);
         }
     }
 
@@ -482,8 +528,11 @@ export class ProviderPoolManager {
         const startedAt = Date.now();
         try {
             const scopedProviderIds = this._resolveScopedProviderIds(providerType, options);
+            const queryLimit = scopedProviderIds.length > 0
+                ? Math.max(1, scopedProviderIds.length)
+                : Math.max(1, this.expiryScanDbFetchLimit);
             const rows = await runtimeStorage.listCredentialExpiryCandidates(providerType, {
-                limit: Math.max(20000, scopedProviderIds.length || 0),
+                limit: queryLimit,
                 offset: 0,
                 providerIds: scopedProviderIds.length > 0 ? scopedProviderIds : undefined
             });

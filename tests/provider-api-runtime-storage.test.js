@@ -292,7 +292,7 @@ describe('Provider API runtime storage compatibility', () => {
                     GROK_COOKIE_TOKEN: 'auth-token',
                     isHealthy: false,
                     errorCount: 2,
-                    lastErrorMessage: '401 Unauthorized'
+                    lastErrorMessage: 'Refresh failed: Failed to refresh Codex token. Please re-authenticate.'
                 },
                 {
                     uuid: 'grok-timeout',
