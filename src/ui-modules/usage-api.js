@@ -1667,24 +1667,19 @@ export async function handleGetUsage(req, res, currentConfig, providerPoolManage
         });
 
         if (refresh && useAsyncTask) {
-            const task = startAllProvidersUsageRefreshTask(currentConfig, providerPoolManager, {
-                usageConcurrency,
-                groupSize,
-                groupMinPoolSize
-            });
-            logUsageRequestDebug(debugEnabled, 'GET /api/usage async task started', {
-                taskId: task.id,
-                status: task.status,
-                pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
+            // TODO: 重新设计用量批量刷新逻辑后，再恢复调用方入口。
+            logUsageRequestDebug(debugEnabled, 'GET /api/usage async refresh entry disabled', {
+                refresh,
+                useAsyncTask,
                 durationMs: Date.now() - startedAt
-            });
-            res.writeHead(202, { 'Content-Type': 'application/json' });
+            }, 'warn');
+            res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
-                taskId: task.id,
-                status: task.status,
-                type: task.type,
-                pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
-                progress: task.progress
+                error: {
+                    code: 'usage_batch_refresh_entry_disabled',
+                    message: 'Usage batch refresh entry is temporarily disabled. TODO: redesign usage refresh flow before re-enabling.',
+                    entryType: 'all'
+                }
             }));
             return true;
         }
@@ -1712,24 +1707,19 @@ export async function handleGetUsage(req, res, currentConfig, providerPoolManage
                 logger.debug('[Usage API] Returning cached usage data');
                 usageResults = { ...cachedData, fromCache: true };
             } else if (shouldBootstrapUsageAsync(currentConfig, providerPoolManager)) {
-                const task = startAllProvidersUsageRefreshTask(currentConfig, providerPoolManager, {
-                    usageConcurrency,
-                    groupSize,
-                    groupMinPoolSize
-                });
-                logUsageRequestDebug(debugEnabled, 'GET /api/usage cache miss switched to async task', {
-                    taskId: task.id,
+                // TODO: 重新设计用量批量刷新逻辑后，再恢复调用方入口。
+                logUsageRequestDebug(debugEnabled, 'GET /api/usage cache miss async bootstrap entry disabled', {
                     providerPoolCount: getUsageProviderPoolCount(currentConfig, providerPoolManager),
                     syncThreshold: resolveUsageSyncQueryMaxProviderCount(currentConfig),
                     durationMs: Date.now() - startedAt
-                });
-                res.writeHead(202, { 'Content-Type': 'application/json' });
+                }, 'warn');
+                res.writeHead(503, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
-                    taskId: task.id,
-                    status: task.status,
-                    type: task.type,
-                    pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
-                    progress: task.progress
+                    error: {
+                        code: 'usage_batch_refresh_entry_disabled',
+                        message: 'Usage batch refresh entry is temporarily disabled. TODO: redesign usage refresh flow before re-enabling.',
+                        entryType: 'all'
+                    }
                 }));
                 return true;
             }
@@ -1816,26 +1806,20 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
         });
 
         if (refresh && useAsyncTask) {
-            const task = startProviderUsageRefreshTask(currentConfig, providerPoolManager, providerType, {
-                usageConcurrency,
-                groupSize,
-                groupMinPoolSize
-            });
-            logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} async task started`, {
+            // TODO: 重新设计用量批量刷新逻辑后，再恢复调用方入口。
+            logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} async refresh entry disabled`, {
                 providerType,
-                taskId: task.id,
-                status: task.status,
-                pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
+                refresh,
+                useAsyncTask,
                 durationMs: Date.now() - startedAt
-            });
-            res.writeHead(202, { 'Content-Type': 'application/json' });
+            }, 'warn');
+            res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
-                taskId: task.id,
-                status: task.status,
-                type: task.type,
-                providerType,
-                pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
-                progress: task.progress
+                error: {
+                    code: 'usage_batch_refresh_entry_disabled',
+                    message: 'Usage batch refresh entry is temporarily disabled. TODO: redesign usage refresh flow before re-enabling.',
+                    entryType: 'provider'
+                }
             }));
             return true;
         }
@@ -1858,25 +1842,20 @@ export async function handleGetProviderUsage(req, res, currentConfig, providerPo
                 const { __pageApplied, ...normalizedCachedData } = cachedData;
                 usageResults = { ...normalizedCachedData, fromCache: true };
             } else if (shouldBootstrapProviderUsageAsync(providerType, currentConfig, providerPoolManager)) {
-                const task = startProviderUsageRefreshTask(currentConfig, providerPoolManager, providerType, {
-                    usageConcurrency,
-                    groupSize,
-                    groupMinPoolSize
-                });
-                logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} cache miss switched to async task`, {
+                // TODO: 重新设计用量批量刷新逻辑后，再恢复调用方入口。
+                logUsageRequestDebug(debugEnabled, `GET /api/usage/${providerType} cache miss async bootstrap entry disabled`, {
                     providerType,
-                    taskId: task.id,
-                    pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
+                    providerPoolCount: getProvidersForType(providerType, currentConfig, providerPoolManager).length,
+                    syncThreshold: resolveUsageSyncQueryMaxProviderCount(currentConfig),
                     durationMs: Date.now() - startedAt
                 }, 'warn');
-                res.writeHead(202, { 'Content-Type': 'application/json' });
+                res.writeHead(503, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
-                    taskId: task.id,
-                    status: task.status,
-                    type: task.type,
-                    providerType,
-                    pollIntervalMs: USAGE_TASK_DEFAULT_POLL_INTERVAL_MS,
-                    progress: task.progress
+                    error: {
+                        code: 'usage_batch_refresh_entry_disabled',
+                        message: 'Usage batch refresh entry is temporarily disabled. TODO: redesign usage refresh flow before re-enabling.',
+                        entryType: 'provider'
+                    }
                 }));
                 return true;
             }

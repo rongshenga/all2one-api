@@ -379,7 +379,7 @@ function showProviderManagerModal(data) {
                     <div class="provider-filter-actions">
                         <label class="provider-filter-select">
                             <span data-i18n="modal.provider.filter.errorType">${t('modal.provider.filter.errorType')}</span>
-                            <select id="providerErrorTypeFilter" class="form-control" onchange="window.applyProviderErrorTypeFilter(this.value)">
+                            <select id="providerErrorTypeFilter" class="form-control provider-filter-select-control" onchange="window.applyProviderErrorTypeFilter(this.value)">
                                 <option value="all" data-i18n="modal.provider.deleteUnhealthy.errorType.all">${t('modal.provider.deleteUnhealthy.errorType.all')}</option>
                                 <option value="auth" data-i18n="modal.provider.deleteUnhealthy.errorType.auth">${t('modal.provider.deleteUnhealthy.errorType.auth')}</option>
                                 <option value="quota" data-i18n="modal.provider.deleteUnhealthy.errorType.quota">${t('modal.provider.deleteUnhealthy.errorType.quota')}</option>
