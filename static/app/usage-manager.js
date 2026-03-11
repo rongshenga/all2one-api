@@ -184,6 +184,49 @@ function buildUsageGroupTaskMeta(taskState) {
     });
 }
 
+function buildUsageGroupTaskInlineMeta(taskState) {
+    const processed = Number(taskState?.processedInstances || 0);
+    const total = Number(taskState?.totalInstances || 0);
+    if (total <= 0) {
+        return t('usage.group.taskPending');
+    }
+    return t('usage.group.taskInlineMeta', {
+        processed,
+        total
+    });
+}
+
+function setUsageProviderGroupRefreshing(targetGroup, header, refreshing, canceling = false) {
+    if (targetGroup?.classList?.toggle) {
+        targetGroup.classList.toggle('usage-provider-group-refreshing', refreshing);
+    }
+
+    const refreshButtons = typeof header?.querySelectorAll === 'function'
+        ? Array.from(header.querySelectorAll('.btn-usage-provider-refresh'))
+        : [];
+    refreshButtons.forEach((button) => {
+        if (!button) {
+            return;
+        }
+        button.disabled = refreshing;
+        button.classList?.toggle?.('is-refreshing', refreshing);
+        button.setAttribute?.('aria-busy', refreshing ? 'true' : 'false');
+    });
+
+    const refreshNameButton = header?.querySelector?.('.provider-name-refresh');
+    if (refreshNameButton) {
+        refreshNameButton.classList?.toggle?.('is-refreshing', refreshing);
+        refreshNameButton.setAttribute?.('aria-busy', refreshing ? 'true' : 'false');
+        if (!refreshing) {
+            refreshNameButton.title = t('usage.group.refreshPage');
+        } else {
+            refreshNameButton.title = canceling
+                ? t('usage.taskCanceling')
+                : t('usage.group.taskRunning');
+        }
+    }
+}
+
 function ensureUsageTaskIndicatorContainer(header) {
     let indicator = findChildByClass(header, 'usage-task-indicator') || header?.querySelector?.('.usage-task-indicator');
     if (indicator) {
@@ -195,27 +238,17 @@ function ensureUsageTaskIndicatorContainer(header) {
     indicator.hidden = true;
     indicator.style.display = 'none';
 
-    const top = document.createElement('div');
-    top.className = 'usage-task-indicator-top';
+    const spinner = document.createElement('i');
+    spinner.className = 'fas fa-spinner fa-spin usage-task-indicator-spinner';
 
     const badge = document.createElement('span');
     badge.className = 'usage-task-indicator-badge';
 
-    const percent = document.createElement('span');
-    percent.className = 'usage-task-indicator-percent';
-
-    top.appendChild(badge);
-    top.appendChild(percent);
-
     const meta = document.createElement('div');
     meta.className = 'usage-task-indicator-meta';
 
-    const bar = document.createElement('div');
-    bar.className = 'usage-task-progress-bar';
-
-    const fill = document.createElement('div');
-    fill.className = 'usage-task-progress-fill';
-    bar.appendChild(fill);
+    const percent = document.createElement('span');
+    percent.className = 'usage-task-indicator-percent';
 
     const actions = document.createElement('div');
     actions.className = 'usage-task-indicator-actions';
@@ -235,9 +268,10 @@ function ensureUsageTaskIndicatorContainer(header) {
     });
     actions.appendChild(cancelBtn);
 
-    indicator.appendChild(top);
+    indicator.appendChild(spinner);
     indicator.appendChild(meta);
-    indicator.appendChild(bar);
+    indicator.appendChild(percent);
+    indicator.appendChild(badge);
     indicator.appendChild(actions);
 
     const actionsContainer = header?.querySelector?.('.usage-group-actions')
@@ -248,7 +282,6 @@ function ensureUsageTaskIndicatorContainer(header) {
     indicator.__badge = badge;
     indicator.__percent = percent;
     indicator.__meta = meta;
-    indicator.__fill = fill;
     indicator.__cancelBtn = cancelBtn;
     return indicator;
 }
@@ -270,24 +303,25 @@ function updateUsageProviderRefreshIndicator(providerType, groupContainer = null
     if (!isTaskVisible) {
         indicator.hidden = true;
         indicator.style.display = 'none';
+        setUsageProviderGroupRefreshing(targetGroup, header, false, false);
         return;
     }
 
+    const canceling = taskState.status === 'canceling';
     indicator.hidden = false;
     indicator.style.display = 'flex';
     indicator.dataset.providerType = providerType;
     indicator.dataset.taskId = taskState.taskId || '';
-    indicator.__badge.textContent = taskState.status === 'canceling'
+    indicator.__badge.textContent = canceling
         ? t('usage.taskCanceling')
         : t('usage.group.taskRunning');
     indicator.__percent.textContent = `${Number(taskState.percent || 0).toFixed(1)}%`;
-    indicator.__meta.textContent = buildUsageGroupTaskMeta(taskState);
-    indicator.__fill.style.width = `${Math.max(0, Math.min(100, Number(taskState.percent || 0)))}%`;
+    indicator.__meta.textContent = buildUsageGroupTaskInlineMeta(taskState);
     if (indicator.__cancelBtn) {
-        const canceling = taskState.status === 'canceling';
         indicator.__cancelBtn.disabled = canceling;
         indicator.__cancelBtn.textContent = canceling ? t('usage.taskCanceling') : t('usage.taskCancel');
     }
+    setUsageProviderGroupRefreshing(targetGroup, header, true, canceling);
     indicator.title = buildUsageTaskProgressText({
         providerType,
         progress: {
@@ -717,6 +751,34 @@ function buildUsageTaskProgressText(taskStatus, fallbackProviderName) {
     });
 }
 
+function normalizeUsageTaskSummary(summary = null, fallbackResult = null) {
+    if (summary && typeof summary === 'object') {
+        return {
+            normalCount: Math.max(0, Number(summary.normalCount || 0)),
+            quotaExhaustedCount: Math.max(0, Number(summary.quotaExhaustedCount || 0)),
+            exceptionCount: Math.max(0, Number(summary.exceptionCount || 0))
+        };
+    }
+
+    const successCount = Math.max(0, Number(fallbackResult?.successCount || 0));
+    const errorCount = Math.max(0, Number(fallbackResult?.errorCount || 0));
+    return {
+        normalCount: successCount,
+        quotaExhaustedCount: 0,
+        exceptionCount: errorCount
+    };
+}
+
+function buildUsageRefreshSummaryText(taskStatus) {
+    const taskResult = taskStatus?.result || {};
+    const summary = normalizeUsageTaskSummary(taskResult.summary, taskResult);
+    return t('usage.taskCompletedSummary', {
+        normal: summary.normalCount,
+        quotaExhausted: summary.quotaExhaustedCount,
+        exception: summary.exceptionCount
+    });
+}
+
 function estimateProviderRefreshDurationSeconds(totalCount) {
     return Math.max(1, Math.ceil(Math.max(0, Number(totalCount || 0)) * USAGE_PROVIDER_REFRESH_ESTIMATED_SECONDS_PER_ACCOUNT));
 }
@@ -771,14 +833,17 @@ function resolveProviderRefreshScope(providerType, providerSummary = {}, options
  * @param {string} fallbackProviderName - 回退提供商名称
  * @returns {Promise<Object>} 完成后的任务状态
  */
-async function runUsageRefreshTask(startUrl, loadingEl, fallbackProviderName) {
-    const startPayload = await startUsageRefreshTask(startUrl, loadingEl);
+async function runUsageRefreshTask(startUrl, loadingEl, fallbackProviderName, options = {}) {
+    const startPayload = await startUsageRefreshTask(startUrl, loadingEl, options);
     return await pollUsageRefreshTask(startPayload.taskId, startPayload.pollIntervalMs, loadingEl, fallbackProviderName, {
-        debugContext: startUrl
+        debugContext: startUrl,
+        onUpdate: options.onUpdate,
+        stopWhen: options.stopWhen,
+        showLoadingText: options.showLoadingText
     });
 }
 
-async function startUsageRefreshTask(startUrl, loadingEl = null) {
+async function startUsageRefreshTask(startUrl, loadingEl = null, options = {}) {
     const startResponse = await fetch(startUrl, {
         method: 'GET',
         headers: getAuthHeaders()
@@ -794,8 +859,12 @@ async function startUsageRefreshTask(startUrl, loadingEl = null) {
         throw new Error('Invalid usage task response');
     }
 
-    showToast(t('common.info'), t('usage.taskStarted'), 'info');
-    setUsageLoadingText(loadingEl, t('usage.taskPreparing'));
+    if (options.showTaskStartToast !== false) {
+        showToast(t('common.info'), t('usage.taskStarted'), 'info');
+    }
+    if (options.showLoadingText !== false) {
+        setUsageLoadingText(loadingEl, t('usage.taskPreparing'));
+    }
 
     return startPayload;
 }
@@ -840,6 +909,7 @@ async function cancelUsageRefreshTask(providerType, taskId) {
 async function pollUsageRefreshTask(taskId, initialPollIntervalMs, loadingEl, fallbackProviderName, options = {}) {
     const startedAt = Date.now();
     const debugContext = options.debugContext || taskId;
+    const shouldUpdateLoadingText = options.showLoadingText !== false;
 
     let lastProgressSignature = null;
     let lastProgressAt = Date.now();
@@ -886,10 +956,12 @@ async function pollUsageRefreshTask(taskId, initialPollIntervalMs, loadingEl, fa
                 throw new Error(`Usage refresh task stalled for ${USAGE_TASK_STALLED_PROGRESS_TIMEOUT_MS}ms: ${taskId}`);
             }
 
-            if (taskStatus.status === 'canceling') {
-                setUsageLoadingText(loadingEl, t('usage.taskCanceling'));
-            } else {
-                setUsageLoadingText(loadingEl, buildUsageTaskProgressText(taskStatus, fallbackProviderName));
+            if (shouldUpdateLoadingText) {
+                if (taskStatus.status === 'canceling') {
+                    setUsageLoadingText(loadingEl, t('usage.taskCanceling'));
+                } else {
+                    setUsageLoadingText(loadingEl, buildUsageTaskProgressText(taskStatus, fallbackProviderName));
+                }
             }
 
             if (typeof options.stopWhen === 'function' && options.stopWhen(taskStatus) === true) {
@@ -1198,7 +1270,6 @@ function renderUsageData(data, container) {
  * @param {string} providerType - 提供商类型
  */
 export async function refreshProviderUsage(providerType, options = {}) {
-    const loadingEl = document.getElementById('usageLoading');
     let detachedRefresh = false;
 
     if (refreshingProviders.has(providerType)) {
@@ -1207,10 +1278,6 @@ export async function refreshProviderUsage(providerType, options = {}) {
     }
 
     refreshingProviders.add(providerType);
-
-    // 显示加载状态
-    if (loadingEl) loadingEl.style.display = 'block';
-    setUsageLoadingText(loadingEl, t('usage.loading'));
 
     try {
         const providerName = getProviderDisplayName(providerType);
@@ -1224,7 +1291,32 @@ export async function refreshProviderUsage(providerType, options = {}) {
             return;
         }
         const refreshStartUrl = buildProviderRefreshStartUrl(providerType, refreshScope);
+        const initialTotalInstances = refreshScope.scope === 'page'
+            ? Math.max(1, Math.min(
+                DEFAULT_USAGE_PROVIDER_DETAILS_PAGE_SIZE,
+                Number(providerSummary.availableCount || providerSummary.totalCount || DEFAULT_USAGE_PROVIDER_DETAILS_PAGE_SIZE)
+            ))
+            : Math.max(1, Number(providerSummary.totalCount || providerTotalCount || 0));
         invalidateProviderUsageDetailsCache(providerType, previousGroup);
+
+        setUsageProviderRefreshState(providerType, {
+            providerType,
+            status: 'running',
+            scope: refreshScope.scope,
+            page: refreshScope.page,
+            limit: DEFAULT_USAGE_PROVIDER_DETAILS_PAGE_SIZE,
+            progress: {
+                currentProvider: providerType,
+                processedInstances: 0,
+                totalInstances: initialTotalInstances,
+                percent: 0
+            }
+        }, {
+            status: 'running',
+            scope: refreshScope.scope,
+            page: refreshScope.page,
+            limit: DEFAULT_USAGE_PROVIDER_DETAILS_PAGE_SIZE
+        });
 
         logUsageUiDebug('provider usage refresh started', {
             providerType,
@@ -1233,14 +1325,16 @@ export async function refreshProviderUsage(providerType, options = {}) {
             scope: refreshScope.scope,
             page: refreshScope.page
         });
-        showToast(t('common.info'), t('usage.refreshingProvider', { name: providerName }), 'info');
 
         const shouldDetachToBackground = refreshScope.scope === 'provider_all'
             && providerTotalCount >= USAGE_BACKGROUND_REFRESH_MIN_TOTAL;
 
         if (shouldDetachToBackground) {
             detachedRefresh = true;
-            const taskPayload = await startUsageRefreshTask(refreshStartUrl, loadingEl);
+            const taskPayload = await startUsageRefreshTask(refreshStartUrl, null, {
+                showTaskStartToast: false,
+                showLoadingText: false
+            });
             logUsageUiDebug('provider usage refresh detached to background task', {
                 providerType,
                 taskId: taskPayload?.taskId || null,
@@ -1272,16 +1366,16 @@ export async function refreshProviderUsage(providerType, options = {}) {
                         );
                     }
 
-                    if (isUsageSectionActive()) {
-                        const finishedStatus = finalStatus?.status || 'completed';
-                        if (finishedStatus === 'canceled') {
-                            showToast(t('common.info'), t('usage.taskCanceled'), 'info');
-                        } else {
-                            showToast(t('common.success'), t('usage.taskCompleted'), 'success');
-                        }
-                    }
-                    refreshingProviders.delete(providerType);
-                },
+            if (isUsageSectionActive()) {
+                const finishedStatus = finalStatus?.status || 'completed';
+                if (finishedStatus === 'canceled') {
+                    showToast(t('common.info'), t('usage.taskCanceled'), 'info');
+                } else {
+                    showToast(t('common.success'), buildUsageRefreshSummaryText(finalStatus), 'success');
+                }
+            }
+            refreshingProviders.delete(providerType);
+        },
                 onFailed: async (error) => {
                     console.error(`后台刷新提供商 ${providerType} 失败:`, error);
                     if (isUsageSectionActive()) {
@@ -1295,7 +1389,22 @@ export async function refreshProviderUsage(providerType, options = {}) {
             return;
         }
 
-        const finalStatus = await runUsageRefreshTask(refreshStartUrl, loadingEl, providerName);
+        const finalStatus = await runUsageRefreshTask(refreshStartUrl, null, providerName, {
+            showTaskStartToast: false,
+            showLoadingText: false,
+            onUpdate: (taskStatus) => {
+                setUsageProviderRefreshState(providerType, {
+                    ...taskStatus,
+                    taskId: taskStatus.taskId || null
+                }, {
+                    taskId: taskStatus.taskId || null,
+                    scope: taskStatus.scope || refreshScope.scope,
+                    page: taskStatus.page || refreshScope.page,
+                    limit: taskStatus.limit || DEFAULT_USAGE_PROVIDER_DETAILS_PAGE_SIZE
+                });
+            }
+        });
+        clearUsageProviderRefreshState(providerType);
         await loadUsage({ bypassInFlight: true });
 
         const refreshedGroup = invalidateProviderUsageDetailsCache(providerType);
@@ -1316,7 +1425,7 @@ export async function refreshProviderUsage(providerType, options = {}) {
                 showToast(t('common.info'), t('usage.taskCanceled'), 'info');
                 return;
             }
-            showToast(t('common.success'), t('usage.taskCompleted'), 'success');
+            showToast(t('common.success'), buildUsageRefreshSummaryText(finalStatus), 'success');
         }
     } catch (error) {
         console.error(`刷新提供商 ${providerType} 失败:`, error);
@@ -1326,10 +1435,7 @@ export async function refreshProviderUsage(providerType, options = {}) {
     } finally {
         if (!detachedRefresh) {
             refreshingProviders.delete(providerType);
-        }
-        if (loadingEl) {
-            loadingEl.style.display = 'none';
-            setUsageLoadingText(loadingEl, t('usage.loading'));
+            clearUsageProviderRefreshState(providerType);
         }
     }
 }

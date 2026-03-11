@@ -364,6 +364,92 @@ function parsePositiveInt(value) {
     return parsed;
 }
 
+function toSafeNumber(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function calculateUsagePercentFromBreakdown(usageBreakdown = []) {
+    if (!Array.isArray(usageBreakdown) || usageBreakdown.length === 0) {
+        return 0;
+    }
+
+    const codexEntry = usageBreakdown.find((breakdown) => breakdown?.rateLimit?.secondary_window);
+    if (codexEntry?.rateLimit?.secondary_window) {
+        const secondaryPercent = toSafeNumber(codexEntry.rateLimit.secondary_window.used_percent);
+        if (secondaryPercent >= 100) {
+            return 100;
+        }
+    }
+
+    let totalUsed = 0;
+    let totalLimit = 0;
+    for (const breakdown of usageBreakdown) {
+        totalUsed += toSafeNumber(breakdown?.currentUsage);
+        totalLimit += toSafeNumber(breakdown?.usageLimit);
+
+        if (breakdown?.freeTrial?.status === 'ACTIVE') {
+            totalUsed += toSafeNumber(breakdown.freeTrial.currentUsage);
+            totalLimit += toSafeNumber(breakdown.freeTrial.usageLimit);
+        }
+
+        if (Array.isArray(breakdown?.bonuses)) {
+            for (const bonus of breakdown.bonuses) {
+                if (bonus?.status !== 'ACTIVE') {
+                    continue;
+                }
+                totalUsed += toSafeNumber(bonus.currentUsage);
+                totalLimit += toSafeNumber(bonus.usageLimit);
+            }
+        }
+    }
+
+    if (totalLimit <= 0) {
+        return 0;
+    }
+    return Math.min(100, (totalUsed / totalLimit) * 100);
+}
+
+function isUsageQuotaExhausted(instance = {}) {
+    if (!instance || instance.success !== true) {
+        return false;
+    }
+
+    const usageBreakdown = instance?.usage?.usageBreakdown;
+    const percent = calculateUsagePercentFromBreakdown(usageBreakdown);
+    return percent >= 100;
+}
+
+function buildProviderRefreshSummary(instances = []) {
+    let normalCount = 0;
+    let quotaExhaustedCount = 0;
+    let exceptionCount = 0;
+
+    for (const instance of instances) {
+        if (!instance) {
+            continue;
+        }
+
+        if (instance.success !== true) {
+            exceptionCount += 1;
+            continue;
+        }
+
+        if (isUsageQuotaExhausted(instance)) {
+            quotaExhaustedCount += 1;
+            continue;
+        }
+
+        normalCount += 1;
+    }
+
+    return {
+        normalCount,
+        quotaExhaustedCount,
+        exceptionCount
+    };
+}
+
 /**
  * 将输入解析为布尔值
  * @param {any} value - 输入值
@@ -1593,6 +1679,7 @@ function startProviderUsageRefreshTask(currentConfig, providerPoolManager, provi
                     )
                     : 100
             };
+            const providerSummary = buildProviderRefreshSummary(usageResults.instances);
             task.result = {
                 providerType,
                 scope: targetPlan.scope,
@@ -1602,7 +1689,8 @@ function startProviderUsageRefreshTask(currentConfig, providerPoolManager, provi
                 totalCount: usageResults.totalCount || 0,
                 processedCount: usageResults.processedCount || 0,
                 successCount: usageResults.successCount || 0,
-                errorCount: usageResults.errorCount || 0
+                errorCount: usageResults.errorCount || 0,
+                summary: providerSummary
             };
             logUsageLifecycle(
                 lifecycleLoggingEnabled,
@@ -1614,6 +1702,7 @@ function startProviderUsageRefreshTask(currentConfig, providerPoolManager, provi
                 processedCount: task.result.processedCount,
                 successCount: task.result.successCount,
                 errorCount: task.result.errorCount,
+                summary: task.result.summary,
                 scope: targetPlan.scope,
                 page: targetPlan.scope === PROVIDER_USAGE_REFRESH_SCOPE_PAGE ? targetPlan.page : null
                 }

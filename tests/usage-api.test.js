@@ -234,7 +234,12 @@ describe('Usage API Refresh Cache Strategy', () => {
         expect(pageTaskFinal.page).toBe(2);
         expect(pageTaskFinal.limit).toBe(30);
         expect(pageTaskFinal.result).toEqual(expect.objectContaining({
-            totalCount: 30
+            totalCount: 30,
+            summary: expect.objectContaining({
+                normalCount: 30,
+                quotaExhaustedCount: 0,
+                exceptionCount: 0
+            })
         }));
 
         const providerAllReq = {
@@ -253,7 +258,81 @@ describe('Usage API Refresh Cache Strategy', () => {
         expect(providerAllTaskFinal.page).toBe(null);
         expect(providerAllTaskFinal.limit).toBe(30);
         expect(providerAllTaskFinal.result).toEqual(expect.objectContaining({
-            totalCount: 65
+            totalCount: 65,
+            summary: expect.objectContaining({
+                normalCount: 65,
+                quotaExhaustedCount: 0,
+                exceptionCount: 0
+            })
+        }));
+    });
+
+    test('should include provider refresh summary counts for normal quota exhausted and exception', async () => {
+        const providerType = 'openai-codex-oauth';
+        const providers = [
+            { uuid: 'normal', customName: 'Normal' },
+            { uuid: 'exhausted', customName: 'Exhausted' },
+            { uuid: 'broken', customName: 'Broken' }
+        ];
+
+        serviceInstances[`${providerType}normal`] = {
+            getUsageLimits: jest.fn(async () => ({
+                usageBreakdown: [
+                    {
+                        currentUsage: 10,
+                        usageLimit: 100
+                    }
+                ]
+            }))
+        };
+        serviceInstances[`${providerType}exhausted`] = {
+            getUsageLimits: jest.fn(async () => ({
+                usageBreakdown: [
+                    {
+                        currentUsage: 100,
+                        usageLimit: 100
+                    }
+                ]
+            }))
+        };
+        serviceInstances[`${providerType}broken`] = {
+            getUsageLimits: jest.fn(async () => {
+                throw new Error('quota endpoint failed');
+            })
+        };
+
+        const req = {
+            url: `/api/usage/${encodeURIComponent(providerType)}?refresh=true&async=true&scope=provider_all&groupSize=1&concurrency=1`,
+            headers: {
+                host: 'localhost:3000'
+            }
+        };
+        const res = createMockRes();
+        const currentConfig = {
+            providerPools: {
+                [providerType]: providers
+            },
+            USAGE_QUERY_CONCURRENCY_PER_PROVIDER: 1
+        };
+        const providerPoolManager = {
+            providerPools: {
+                [providerType]: providers
+            }
+        };
+
+        const handled = await handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(202);
+
+        const taskPayload = JSON.parse(res.body);
+        const finalStatus = await waitForUsageTaskTerminal(taskPayload.taskId, 8000);
+        expect(finalStatus.status).toBe('completed');
+        expect(finalStatus.result).toEqual(expect.objectContaining({
+            summary: {
+                normalCount: 1,
+                quotaExhaustedCount: 1,
+                exceptionCount: 1
+            }
         }));
     });
 

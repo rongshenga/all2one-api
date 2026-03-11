@@ -100,8 +100,9 @@ function escapeHtml(text) {
  * @param {string} title - 提示标题 (可选，旧接口为 message)
  * @param {string} message - 提示消息
  * @param {string} type - 消息类型 (info, success, error)
+ * @param {number} durationMs - 展示时长（毫秒）
  */
-function showToast(title, message, type = 'info') {
+function showToast(title, message, type = 'info', durationMs = 10000) {
     // 兼容旧接口 (message, type)
     if (arguments.length === 2 && (message === 'success' || message === 'error' || message === 'info' || message === 'warning')) {
         type = message;
@@ -123,7 +124,7 @@ function showToast(title, message, type = 'info') {
 
         setTimeout(() => {
             toast.remove();
-        }, 3000);
+        }, Math.max(500, Number(durationMs) || 10000));
     }
 }
 

@@ -253,10 +253,12 @@ describe('frontend event stream and usage manager', () => {
         jest.doMock('../static/app/i18n.js', () => ({
             t: (key, params = {}) => {
                 if (key === 'usage.taskCompleted') return '刷新完成';
+                if (key === 'usage.taskCompletedSummary') return `汇总 正常${params.normal} 用光${params.quotaExhausted} 异常${params.exception}`;
                 if (key === 'usage.taskFailed') return '刷新失败';
                 if (key === 'usage.taskCanceled') return '刷新已取消';
                 if (key === 'usage.taskCancel') return '取消刷新';
                 if (key === 'usage.taskCanceling') return '取消中...';
+                if (key === 'usage.group.taskInlineMeta') return `${params.processed}/${params.total}`;
                 if (key === 'usage.allProviders') return '全部提供商';
                 if (key === 'usage.refreshScope.page') return '当前页';
                 if (key === 'usage.refreshScope.providerAll') return '该提供商全部账号';
@@ -695,7 +697,14 @@ describe('frontend event stream and usage manager', () => {
                         }
                         : {
                             status: 'completed',
-                            providerType: 'gemini-cli-oauth'
+                            providerType: 'gemini-cli-oauth',
+                            result: {
+                                summary: {
+                                    normalCount: 1,
+                                    quotaExhaustedCount: 0,
+                                    exceptionCount: 0
+                                }
+                            }
                         }
                 };
             }
@@ -761,6 +770,8 @@ describe('frontend event stream and usage manager', () => {
         expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth?refresh=true&async=true&scope=page&page=1');
         expect(fetchCalls).toContain('/api/usage/gemini-cli-oauth?page=1&limit=30');
         expect(fetchCalls.filter((url) => url === '/api/usage')).toHaveLength(2);
+        expect(usageLoading.style.display).toBe('none');
+        expect(showToast).toHaveBeenCalledWith('成功', '汇总 正常1 用光0 异常0', 'success');
 
         const refreshedGroup = usageContent.children[0];
         expect(refreshedGroup.classList.contains('collapsed')).toBe(false);
