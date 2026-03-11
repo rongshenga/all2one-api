@@ -4,7 +4,6 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
 import { broadcastEvent } from './event-broadcast.js';
-import { scanConfigFiles } from './config-scanner.js';
 import {
     exportProviderPoolsCompatSnapshot,
     listCredentialAssetsWithRuntimeStorage
@@ -55,13 +54,8 @@ function logUploadConfigDebug(enabled, message, payload = null, level = 'info') 
 }
 
 function getUploadConfigSource(req) {
-    try {
-        const requestUrl = new URL(req?.url || '/', 'http://127.0.0.1');
-        const source = (requestUrl.searchParams.get('source') || '').trim().toLowerCase();
-        return source === 'scan' ? 'scan' : 'runtime';
-    } catch {
-        return 'runtime';
-    }
+    // 上传配置页统一走 runtime storage，禁止全盘扫描
+    return 'runtime';
 }
 
 function normalizePositiveInt(value, fallback = null) {
@@ -69,32 +63,16 @@ function normalizePositiveInt(value, fallback = null) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function resolveUploadConfigLimit(currentConfig = {}) {
-    const configured = normalizePositiveInt(currentConfig?.UPLOAD_CONFIGS_MAX_RESULTS, null);
-    if (configured === null) {
-        // 默认限制返回数量，避免大号池导致 UI 内存暴涨
-        return 1000;
-    }
-    return configured;
-}
-
-function resolveUploadConfigListOptions(req, currentConfig = {}) {
-    const options = {};
+function resolveUploadConfigListOptions(req) {
+    const options = {
+        // 固定上限 50，避免页面请求被大号池拖垮
+        limit: 50
+    };
     try {
         const requestUrl = new URL(req?.url || '/', 'http://127.0.0.1');
-        const limit = normalizePositiveInt(requestUrl.searchParams.get('limit'), null);
         const offset = normalizePositiveInt(requestUrl.searchParams.get('offset'), 0);
         const sort = requestUrl.searchParams.get('sort');
         const sourceKind = requestUrl.searchParams.get('sourceKind');
-
-        if (limit !== null) {
-            options.limit = limit;
-        } else {
-            const defaultLimit = resolveUploadConfigLimit(currentConfig);
-            if (defaultLimit !== null) {
-                options.limit = defaultLimit;
-            }
-        }
 
         if (Number.isFinite(offset) && offset >= 0) {
             options.offset = offset;
@@ -107,12 +85,7 @@ function resolveUploadConfigListOptions(req, currentConfig = {}) {
         if (typeof sourceKind === 'string' && sourceKind.trim()) {
             options.sourceKind = sourceKind.trim();
         }
-    } catch {
-        const defaultLimit = resolveUploadConfigLimit(currentConfig);
-        if (defaultLimit !== null) {
-            options.limit = defaultLimit;
-        }
-    }
+    } catch {}
 
     return options;
 }
@@ -172,7 +145,7 @@ export async function handleGetUploadConfigs(req, res, currentConfig, providerPo
     const debugEnabled = isUploadConfigDebugEnabled(req, currentConfig);
     const startedAt = Date.now();
     const source = getUploadConfigSource(req);
-    const listOptions = source === 'runtime' ? resolveUploadConfigListOptions(req, currentConfig) : {};
+    const listOptions = resolveUploadConfigListOptions(req);
 
     logUploadConfigDebug(debugEnabled, 'GET /api/upload-configs started', {
         path: req?.url || '/api/upload-configs',
@@ -181,10 +154,8 @@ export async function handleGetUploadConfigs(req, res, currentConfig, providerPo
     });
 
     try {
-        const configFiles = source === 'scan'
-            ? await scanConfigFiles(currentConfig, providerPoolManager, { debugEnabled })
-            : await buildRuntimeConfigInventory(currentConfig, listOptions);
-        if (source === 'runtime' && Number.isFinite(listOptions?.limit) && Array.isArray(configFiles)) {
+        const configFiles = await buildRuntimeConfigInventory(currentConfig, listOptions);
+        if (Number.isFinite(listOptions?.limit) && Array.isArray(configFiles)) {
             if (configFiles.length >= listOptions.limit) {
                 logger.warn(`[UI API] Upload configs list truncated at ${listOptions.limit} items (adjust UPLOAD_CONFIGS_MAX_RESULTS or query limit/offset).`);
             }
@@ -419,96 +390,15 @@ export async function handleDownloadAllConfigs(req, res, currentConfig) {
  */
 export async function handleDeleteUnboundConfigs(req, res, currentConfig, providerPoolManager) {
     try {
-        // 首先获取所有配置文件及其绑定状态
-        const configFiles = await scanConfigFiles(currentConfig, providerPoolManager);
-        
-        // 筛选出未绑定的配置文件，并且必须在 configs/xxx/ 子目录下
-        // 即路径格式为 configs/子目录名/文件名，而不是直接在 configs/ 根目录下
-        const unboundConfigs = configFiles.filter(config => {
-            if (config.isUsed) return false;
-            
-            // 检查路径是否在 configs/xxx/ 子目录下
-            // 路径格式应该是 configs/子目录/...
-            const normalizedPath = config.path.replace(/\\/g, '/');
-            const pathParts = normalizedPath.split('/');
-            
-            // 路径至少需要3部分：configs/子目录/文件名
-            // 例如：configs/kiro/xxx.json 或 configs/gemini/xxx.json
-            if (pathParts.length >= 3 && pathParts[0] === 'configs') {
-                // 确保第二部分是子目录名（不是文件名）
-                return true;
-            }
-            
-            return false;
-        });
-        
-        if (unboundConfigs.length === 0) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-                success: true,
-                message: 'No unbound config files to delete',
-                deletedCount: 0,
-                deletedFiles: []
-            }));
-            return true;
-        }
-        
-        const deletedFiles = [];
-        const failedFiles = [];
-        
-        for (const config of unboundConfigs) {
-            try {
-                const fullPath = path.join(process.cwd(), config.path);
-                
-                // 安全检查：确保文件路径在允许的目录内
-                const allowedDirs = ['configs'];
-                const relativePath = path.relative(process.cwd(), fullPath);
-                const isAllowed = allowedDirs.some(dir => relativePath.startsWith(dir + path.sep) || relativePath === dir);
-                
-                if (!isAllowed) {
-                    failedFiles.push({
-                        path: config.path,
-                        error: 'Access denied: can only delete files in configs directory'
-                    });
-                    continue;
-                }
-                
-                if (!existsSync(fullPath)) {
-                    failedFiles.push({
-                        path: config.path,
-                        error: 'File does not exist'
-                    });
-                    continue;
-                }
-                
-                await fs.unlink(fullPath);
-                deletedFiles.push(config.path);
-                
-            } catch (error) {
-                failedFiles.push({
-                    path: config.path,
-                    error: error.message
-                });
-            }
-        }
-        
-        // 广播更新事件
-        if (deletedFiles.length > 0) {
-            broadcastEvent('config_update', {
-                action: 'batch_delete',
-                deletedFiles: deletedFiles,
-                timestamp: new Date().toISOString()
-            });
-        }
-        
+        // DB-only 模式下，不再执行全盘扫描 + 文件批量删除
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
             success: true,
-            message: `Deleted ${deletedFiles.length} unbound config files`,
-            deletedCount: deletedFiles.length,
-            deletedFiles: deletedFiles,
-            failedCount: failedFiles.length,
-            failedFiles: failedFiles
+            message: 'DB-only mode: unbound file cleanup by filesystem scan is disabled',
+            deletedCount: 0,
+            deletedFiles: [],
+            failedCount: 0,
+            failedFiles: []
         }));
         return true;
     } catch (error) {

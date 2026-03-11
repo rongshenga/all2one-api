@@ -6,7 +6,6 @@ import { t } from './i18n.js';
 let allConfigs = []; // 存储所有配置数据
 let filteredConfigs = []; // 存储过滤后的配置数据
 let isLoadingConfigs = false; // 防止重复加载配置
-let currentConfigInventorySource = 'runtime'; // 当前列表来源：runtime | scan
 let uploadConfigSectionListenerBound = false; // 防止重复绑定章节激活监听器
 let hasLoadedConfigListOnce = false; // 标记是否已完成首次配置列表加载
 let initialConfigListLoadPromise = null; // 首次加载中的 Promise（用于合并并发触发）
@@ -65,12 +64,17 @@ function searchConfigs(searchTerm = '', statusFilter = '', providerFilter = '') 
         return;
     }
 
+    // 防御性处理：避免事件对象等非字符串入参导致 toLowerCase 报错
+    const normalizedSearchTerm = typeof searchTerm === 'string'
+        ? searchTerm.toLowerCase()
+        : String(searchTerm || '').toLowerCase();
+
     filteredConfigs = allConfigs.filter(config => {
         // 搜索过滤
-        const matchesSearch = !searchTerm ||
-            config.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            config.path.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (config.content && config.content.toLowerCase().includes(searchTerm.toLowerCase()));
+        const matchesSearch = !normalizedSearchTerm ||
+            config.name.toLowerCase().includes(normalizedSearchTerm) ||
+            config.path.toLowerCase().includes(normalizedSearchTerm) ||
+            (config.content && config.content.toLowerCase().includes(normalizedSearchTerm));
 
         // 状态过滤 - 从布尔值 isUsed 转换为状态字符串
         const configStatus = config.isUsed ? 'used' : 'unused';
@@ -499,8 +503,8 @@ function updateStats() {
  * @param {string} statusFilter - 状态过滤
  * @param {string} providerFilter - 提供商过滤
  */
-async function loadConfigList(searchTerm = '', statusFilter = '', providerFilter = '', options = {}) {
-    const source = options.source === 'scan' ? 'scan' : 'runtime';
+async function loadConfigList(searchTerm = '', statusFilter = '', providerFilter = '') {
+    const source = 'runtime';
     // 防止重复加载
     if (isLoadingConfigs) {
         logUploadConfigUiDebug('loadConfigList skipped because a request is already running', {
@@ -524,10 +528,9 @@ async function loadConfigList(searchTerm = '', statusFilter = '', providerFilter
     console.log('开始加载配置列表...');
     
     try {
-        const result = await window.apiClient.get(`/upload-configs?source=${encodeURIComponent(source)}`);
+        const result = await window.apiClient.get(`/upload-configs?source=runtime&limit=50`);
         const fetchedAt = Date.now();
         allConfigs = sortConfigs(result);
-        currentConfigInventorySource = source;
         hasLoadedConfigListOnce = true;
         
         // 如果提供了过滤参数，则执行搜索过滤，否则显示全部
@@ -544,7 +547,7 @@ async function loadConfigList(searchTerm = '', statusFilter = '', providerFilter
             filteredCount: Array.isArray(filteredConfigs) ? filteredConfigs.length : 0,
             fetchDurationMs: fetchedAt - startedAt,
             totalDurationMs: Date.now() - startedAt,
-            source: currentConfigInventorySource
+            source
         });
         console.log('配置列表加载成功，共', allConfigs.length, '个项目');
     } catch (error) {
@@ -554,10 +557,10 @@ async function loadConfigList(searchTerm = '', statusFilter = '', providerFilter
         }, 'error');
         console.error('加载配置列表失败:', error);
         showToast(t('common.error'), t('common.error') + ': ' + error.message, 'error');
-        
-        // 使用模拟数据作为示例
-        allConfigs = sortConfigs(generateMockConfigData());
-        filteredConfigs = [...allConfigs];
+
+        // 失败时保持空态，避免展示任何非 DB 数据
+        allConfigs = [];
+        filteredConfigs = [];
         renderConfigList();
         updateStats();
     } finally {
@@ -567,70 +570,6 @@ async function loadConfigList(searchTerm = '', statusFilter = '', providerFilter
         });
         console.log('配置列表加载完成');
     }
-}
-
-/**
- * 生成模拟配置数据（用于演示）
- * @returns {Array} 模拟配置数据
- */
-function generateMockConfigData() {
-    return [
-        {
-            name: 'provider_pools.json',
-            path: './configs/provider_pools.json',
-            type: 'provider-pool',
-            size: 2048,
-            modified: '2025-11-11T04:30:00.000Z',
-            isUsed: true,
-            content: JSON.stringify({
-                "gemini-cli-oauth": [
-                    {
-                        "GEMINI_OAUTH_CREDS_FILE_PATH": "~/.gemini/oauth/creds.json",
-                        "PROJECT_ID": "test-project"
-                    }
-                ]
-            }, null, 2)
-        },
-        {
-            name: 'config.json',
-            path: './configs/config.json',
-            type: 'other',
-            size: 1024,
-            modified: '2025-11-10T12:00:00.000Z',
-            isUsed: true,
-            content: JSON.stringify({
-                "REQUIRED_API_KEY": "123456",
-                "SERVER_PORT": 3000
-            }, null, 2)
-        },
-        {
-            name: 'oauth_creds.json',
-            path: '~/.gemini/oauth/creds.json',
-            type: 'oauth',
-            size: 512,
-            modified: '2025-11-09T08:30:00.000Z',
-            isUsed: false,
-            content: '{"client_id": "test", "client_secret": "test"}'
-        },
-        {
-            name: 'input_system_prompt.txt',
-            path: './configs/input_system_prompt.txt',
-            type: 'system-prompt',
-            size: 256,
-            modified: '2025-11-08T15:20:00.000Z',
-            isUsed: true,
-            content: '你是一个有用的AI助手...'
-        },
-        {
-            name: 'invalid_config.json',
-            path: './invalid_config.json',
-            type: 'other',
-            size: 128,
-            modified: '2025-11-07T10:15:00.000Z',
-            isUsed: false,
-            content: '{"invalid": json}'
-        }
-    ];
 }
 
 /**
@@ -967,9 +906,7 @@ function initUploadConfigManager() {
             const currentStatusFilter = statusFilter?.value || '';
             const currentProviderFilter = providerFilter?.value || '';
             // 点击搜索按钮时，调接口刷新数据
-            loadConfigList(searchTerm, currentStatusFilter, currentProviderFilter, {
-                source: currentConfigInventorySource
-            });
+            loadConfigList(searchTerm, currentStatusFilter, currentProviderFilter);
         });
     }
 
@@ -993,7 +930,7 @@ function initUploadConfigManager() {
 
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            void loadConfigList('', '', '', { source: 'scan' });
+            void loadConfigList();
         });
     }
 
@@ -1044,7 +981,7 @@ async function reloadConfig() {
         showToast(t('common.success'), result.message, 'success');
         
         // 重新加载配置列表以反映最新的关联状态
-        await loadConfigList('', '', '', { source: currentConfigInventorySource });
+        await loadConfigList();
         
         // 注意：不再发送 configReloaded 事件，避免重复调用
         // window.dispatchEvent(new CustomEvent('configReloaded', {
@@ -1142,29 +1079,17 @@ async function quickLinkProviderConfig(filePath) {
         showToast(t('common.success'), result.message || t('upload.link.success'), 'success');
         
         // 刷新配置列表
-        await loadConfigList('', '', '', { source: currentConfigInventorySource });
+        await loadConfigList();
     } catch (error) {
         console.error('一键关联失败:', error);
         showToast(t('common.error'), t('upload.link.failed') + ': ' + error.message, 'error');
     }
 }
 
-async function ensureScanInventoryLoaded() {
-    if (currentConfigInventorySource === 'scan') {
-        return;
-    }
-
-    showToast(t('common.info'), t('common.loading'), 'info');
-    await loadConfigList('', '', '', { source: 'scan' });
-}
-
 /**
  * 批量关联所有支持的提供商目录下的未关联配置
  */
 async function batchLinkProviderConfigs() {
-    // runtime 层默认只展示已纳入运行时的资产；需要批量关联时切到 scan 层
-    await ensureScanInventoryLoaded();
-
     // 筛选出所有支持的提供商目录下的未关联配置
     const unlinkedConfigs = allConfigs.filter(config => {
         if (config.isUsed) return false;
@@ -1208,7 +1133,7 @@ async function batchLinkProviderConfigs() {
         });
         
         // 刷新配置列表
-        await loadConfigList('', '', '', { source: currentConfigInventorySource });
+        await loadConfigList();
         
         if (result.failCount === 0) {
             showToast(t('common.success'), t('upload.batchLink.success', { count: result.successCount }), 'success');
@@ -1220,7 +1145,7 @@ async function batchLinkProviderConfigs() {
         showToast(t('common.error'), t('upload.batchLink.failed') + ': ' + error.message, 'error');
         
         // 即使失败也刷新列表，可能部分成功
-        await loadConfigList('', '', '', { source: currentConfigInventorySource });
+        await loadConfigList();
     }
 }
 
@@ -1229,8 +1154,6 @@ async function batchLinkProviderConfigs() {
  * 只删除 configs/xxx/ 子目录下的未绑定配置文件
  */
 async function deleteUnboundConfigs() {
-    await ensureScanInventoryLoaded();
-
     // 统计未绑定的配置数量，并且必须在 configs/xxx/ 子目录下
     const unboundConfigs = allConfigs.filter(config => {
         if (config.isUsed) return false;
@@ -1268,7 +1191,7 @@ async function deleteUnboundConfigs() {
             showToast(t('common.success'), t('upload.deleteUnbound.success', { count: result.deletedCount }), 'success');
             
             // 刷新配置列表
-            await loadConfigList('', '', '', { source: currentConfigInventorySource });
+            await loadConfigList();
         } else {
             showToast(t('common.info'), t('upload.deleteUnbound.none'), 'info');
         }
