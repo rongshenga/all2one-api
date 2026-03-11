@@ -76,6 +76,19 @@ async function loadProviderPoolSummaries(currentConfig, providerPoolManager) {
     }, {});
 }
 
+async function loadProviderTypePageFromRuntimeStorage(providerType, query = {}) {
+    const runtimeStorage = getRuntimeStorage();
+    const providerDomain = runtimeStorage?.provider || null;
+    const pageLoader = providerDomain?.loadProviderTypePage
+        || runtimeStorage?.loadProviderTypePage
+        || runtimeStorage?.rawStorage?.loadProviderTypePage;
+    if (typeof pageLoader !== 'function') {
+        return null;
+    }
+
+    return await pageLoader.call(providerDomain || runtimeStorage, providerType, query);
+}
+
 async function persistProviderPools(currentConfig, providerPoolManager, providerPools, options = {}) {
     const normalizedSnapshot = await replaceProviderPoolsCompatSnapshot(currentConfig, providerPools, {
         sourceKind: options.sourceKind || 'ui_api'
@@ -157,7 +170,7 @@ function parsePositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_
     return Math.min(max, Math.max(min, parsed));
 }
 
-function parseProviderListQuery(req, totalCount = 0) {
+function parseProviderListQuery(req, totalCount = null) {
     if (typeof req?.url !== 'string') {
         return null;
     }
@@ -185,15 +198,16 @@ function parseProviderListQuery(req, totalCount = 0) {
     const page = parsePositiveInteger(requestUrl.searchParams.get('page'), 1, { min: 1 });
     const rawSort = requestUrl.searchParams.get('sort');
     const sort = rawSort === 'asc' || rawSort === 'desc' ? rawSort : null;
-    const totalPages = Math.max(1, Math.ceil(Math.max(totalCount, 0) / limit));
-    const normalizedPage = Math.min(page, totalPages);
+    const hasTotalCount = Number.isFinite(totalCount);
+    const totalPages = hasTotalCount ? Math.max(1, Math.ceil(Math.max(totalCount, 0) / limit)) : null;
+    const normalizedPage = totalPages ? Math.min(page, totalPages) : page;
 
     return {
         page: normalizedPage,
         limit,
         offset: (normalizedPage - 1) * limit,
         sort,
-        totalPages,
+        totalPages: totalPages || undefined,
         healthFilter,
         errorType
     };
@@ -371,14 +385,18 @@ function normalizeDeleteUnhealthyErrorType(rawValue = '') {
 
 function classifyProviderErrorType(provider = {}) {
     const message = String(provider?.lastErrorMessage || '').toLowerCase();
-    if (!message) {
+    if (!message.trim()) {
         return 'unknown';
     }
 
+    const hasTokenKeyword = /\b(token|oauth|credential|session)\b/i.test(message);
+    const hasAuthIntent = /\b(auth|authorize|authentication|unauthorized|forbidden|invalid|expired|refresh|reauth|re-authenticate|login)\b/i.test(message);
+
     if (/\b(401|403)\b/.test(message)
-        || /\b(unauthorized|forbidden|accessdenied|invalidtoken|expiredtoken|invalid[_-\s]?grant)\b/i.test(message)
+        || /\b(unauthorized|forbidden|accessdenied|access denied|invalidtoken|expiredtoken|invalid[_-\s]?grant)\b/i.test(message)
         || /\b(re-?authenticate|authentication\s+(failed|required)|login\s+required|not\s+authenticated)\b/i.test(message)
-        || /\b(refresh\s+token|token\s+refresh)\b/i.test(message)) {
+        || /\b(refresh\s+token|token\s+refresh|failed\s+to\s+refresh.*token|token.*(expired|invalid|revoked))\b/i.test(message)
+        || (hasTokenKeyword && hasAuthIntent)) {
         return 'auth';
     }
 
@@ -391,7 +409,7 @@ function classifyProviderErrorType(provider = {}) {
         return 'timeout';
     }
 
-    if (/\b(network|econnreset|econnrefused|enotfound|fetch failed|socket hang up)\b/i.test(message)) {
+    if (/\b(network|econnreset|econnrefused|enotfound|fetch failed|socket hang up|eai_again|dns)\b/i.test(message)) {
         return 'network';
     }
 
@@ -412,11 +430,24 @@ export async function handleGetSupportedProviders(req, res) {
  * 获取特定提供商类型的详细信息
  */
 export async function handleGetProviderType(req, res, currentConfig, providerPoolManager, providerType) {
+    const requestedQuery = parseProviderListQuery(req);
+    if (requestedQuery) {
+        try {
+            const runtimePayload = await loadProviderTypePageFromRuntimeStorage(providerType, requestedQuery);
+            if (runtimePayload && typeof runtimePayload === 'object') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(runtimePayload));
+                return true;
+            }
+        } catch (error) {
+            logger.warn(`[UI API] Failed to load provider page from runtime storage (${providerType}): ${error.message}`);
+        }
+    }
+
     const providerPools = await loadProviderPools(currentConfig, providerPoolManager);
 
     const allProviders = providerPools[providerType] || [];
     const summary = buildProviderSummary(allProviders);
-    const requestedQuery = parseProviderListQuery(req, allProviders.length);
     const healthFilter = requestedQuery?.healthFilter || 'all';
     const errorType = requestedQuery?.errorType || 'all';
     const healthFilteredProviders = filterProvidersByHealth(allProviders, healthFilter);

@@ -246,6 +246,37 @@ export class DualWriteRuntimeStorage {
         });
     }
 
+    async loadProviderTypePage(providerType, options = {}) {
+        return await executePrimary(this.primaryStorage, 'loadProviderTypePage', 'read', async (storage) => {
+            if (typeof storage.loadProviderTypePage === 'function') {
+                return await storage.loadProviderTypePage(providerType, options);
+            }
+            const providerPools = await storage.loadProviderPoolsSnapshot(options);
+            const providers = Array.isArray(providerPools?.[providerType]) ? providerPools[providerType] : [];
+            return {
+                providerType,
+                providers,
+                page: 1,
+                limit: providers.length || 1,
+                totalPages: 1,
+                returnedCount: providers.length,
+                sort: options.sort === 'asc' || options.sort === 'desc' ? options.sort : null,
+                healthFilter: options.healthFilter || 'all',
+                errorType: options.errorType || 'all',
+                filteredCount: providers.length,
+                filteredTotalPages: 1,
+                totalCount: providers.length,
+                healthyCount: providers.filter((provider) => provider?.isHealthy && !provider?.isDisabled).length,
+                usageCount: providers.reduce((sum, provider) => sum + Number(provider?.usageCount || 0), 0),
+                errorCount: providers.reduce((sum, provider) => sum + Number(provider?.errorCount || 0), 0)
+            };
+        }, {
+            providerType: providerType || null,
+            replaySafe: true,
+            replayBoundary: 'provider_type_page_read'
+        });
+    }
+
     async replaceProviderPoolsSnapshot(providerPools = {}, options = {}) {
         return await executeMirroredWrite(
             this,

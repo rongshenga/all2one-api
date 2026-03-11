@@ -151,6 +151,66 @@ describe('Provider API Summary', () => {
         });
     });
 
+    test('should read provider page directly from runtime storage in db mode', async () => {
+        const req = {
+            url: '/api/providers/openai-codex-oauth?page=2&limit=5&healthFilter=unhealthy&errorType=auth'
+        };
+        const res = createMockRes();
+        const currentConfig = {
+            RUNTIME_STORAGE_INFO: {
+                backend: 'db'
+            }
+        };
+        const providerPoolManager = {
+            providerPools: {
+                'openai-codex-oauth': [
+                    { uuid: 'stale-1', customName: 'Stale', isHealthy: true, isDisabled: false, usageCount: 999, errorCount: 999 }
+                ]
+            }
+        };
+        const runtimePayload = {
+            providerType: 'openai-codex-oauth',
+            providers: [{ uuid: 'fresh-auth-1', customName: 'Fresh Auth', isHealthy: false }],
+            page: 2,
+            limit: 5,
+            totalPages: 58,
+            returnedCount: 1,
+            sort: null,
+            healthFilter: 'unhealthy',
+            errorType: 'auth',
+            filteredCount: 288,
+            filteredTotalPages: 58,
+            totalCount: 87782,
+            healthyCount: 87494,
+            usageCount: 0,
+            errorCount: 0
+        };
+        const loadProviderTypePage = jest.fn(async () => runtimePayload);
+        mockGetRuntimeStorage.mockReturnValue({
+            provider: {
+                loadProviderTypePage
+            }
+        });
+
+        const handled = await handleGetProviderType(req, res, currentConfig, providerPoolManager, 'openai-codex-oauth');
+        expect(handled).toBe(true);
+        expect(res.statusCode).toBe(200);
+        expect(loadProviderTypePage).toHaveBeenCalledTimes(1);
+        expect(loadProviderTypePage).toHaveBeenCalledWith(
+            'openai-codex-oauth',
+            expect.objectContaining({
+                page: 2,
+                limit: 5,
+                healthFilter: 'unhealthy',
+                errorType: 'auth'
+            })
+        );
+        expect(mockLoadProviderPoolsCompatSnapshot).not.toHaveBeenCalled();
+
+        const payload = JSON.parse(res.body);
+        expect(payload).toEqual(runtimePayload);
+    });
+
     test('should return provider details with aligned summary stats', async () => {
         const req = {};
         const res = createMockRes();

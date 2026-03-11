@@ -37,6 +37,92 @@ function normalizePositiveInt(value, fallback) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function normalizeProviderListHealthFilter(value) {
+    if (value === 'healthy' || value === 'unhealthy') {
+        return value;
+    }
+    return 'all';
+}
+
+function normalizeProviderListErrorType(value) {
+    const normalized = String(value || 'all').trim().toLowerCase();
+    const allowed = new Set(['all', 'auth', 'quota', 'timeout', 'network', 'other', 'unknown']);
+    return allowed.has(normalized) ? normalized : 'all';
+}
+
+function buildProviderErrorTypeCaseSql(messageExpr = "LOWER(COALESCE(s.last_error_message, ''))") {
+    const message = `(${messageExpr})`;
+    const authConditions = [
+        `${message} LIKE '%401%'`,
+        `${message} LIKE '%403%'`,
+        `${message} LIKE '%unauthorized%'`,
+        `${message} LIKE '%forbidden%'`,
+        `${message} LIKE '%accessdenied%'`,
+        `${message} LIKE '%access denied%'`,
+        `${message} LIKE '%invalidtoken%'`,
+        `${message} LIKE '%invalid token%'`,
+        `${message} LIKE '%expiredtoken%'`,
+        `${message} LIKE '%expired token%'`,
+        `${message} LIKE '%invalid_grant%'`,
+        `${message} LIKE '%invalid-grant%'`,
+        `${message} LIKE '%invalid grant%'`,
+        `${message} LIKE '%re-authenticate%'`,
+        `${message} LIKE '%reauthenticate%'`,
+        `${message} LIKE '%authentication failed%'`,
+        `${message} LIKE '%authentication required%'`,
+        `${message} LIKE '%login required%'`,
+        `${message} LIKE '%not authenticated%'`,
+        `${message} LIKE '%refresh token%'`,
+        `${message} LIKE '%token refresh%'`,
+        `${message} LIKE '%failed to refresh%token%'`,
+        `${message} LIKE '%token expired%'`,
+        `${message} LIKE '%token invalid%'`,
+        `((${message} LIKE '%token%' OR ${message} LIKE '%oauth%' OR ${message} LIKE '%credential%' OR ${message} LIKE '%session%') AND (${message} LIKE '%auth%' OR ${message} LIKE '%unauthorized%' OR ${message} LIKE '%forbidden%' OR ${message} LIKE '%invalid%' OR ${message} LIKE '%expired%' OR ${message} LIKE '%refresh%' OR ${message} LIKE '%login%'))`
+    ];
+    const quotaConditions = [
+        `${message} LIKE '%429%'`,
+        `${message} LIKE '%too many requests%'`,
+        `${message} LIKE '%rate limit%'`,
+        `${message} LIKE '%ratelimit%'`,
+        `${message} LIKE '%quota%'`,
+        `${message} LIKE '%insufficient%'`
+    ];
+    const timeoutConditions = [
+        `${message} LIKE '%timeout%'`,
+        `${message} LIKE '%timed out%'`,
+        `${message} LIKE '%etimedout%'`,
+        `${message} LIKE '%deadline exceeded%'`
+    ];
+    const networkConditions = [
+        `${message} LIKE '%network%'`,
+        `${message} LIKE '%econnreset%'`,
+        `${message} LIKE '%econnrefused%'`,
+        `${message} LIKE '%enotfound%'`,
+        `${message} LIKE '%fetch failed%'`,
+        `${message} LIKE '%socket hang up%'`,
+        `${message} LIKE '%eai_again%'`,
+        `${message} LIKE '%dns%'`
+    ];
+
+    return `CASE
+    WHEN TRIM(${message}) = '' THEN 'unknown'
+    WHEN ${authConditions.join('\n        OR ')} THEN 'auth'
+    WHEN ${quotaConditions.join('\n        OR ')} THEN 'quota'
+    WHEN ${timeoutConditions.join('\n        OR ')} THEN 'timeout'
+    WHEN ${networkConditions.join('\n        OR ')} THEN 'network'
+    ELSE 'other'
+END`;
+}
+
+function buildProviderListOrderSql(sort = null) {
+    if (sort === 'asc' || sort === 'desc') {
+        const direction = sort === 'asc' ? 'ASC' : 'DESC';
+        return `LOWER(COALESCE(r.display_name, r.routing_uuid, '')) ${direction}, r.routing_uuid ${direction}`;
+    }
+
+    return 'r.rowid ASC';
+}
+
 function mergeProviderPoolsSnapshot(target = {}, pageSnapshot = {}) {
     for (const [providerType, providers] of Object.entries(pageSnapshot || {})) {
         if (!Array.isArray(providers) || providers.length === 0) {
@@ -1595,6 +1681,167 @@ ORDER BY r.provider_type ASC;
             };
             return summaries;
         }, {});
+    }
+
+    async loadProviderTypePage(providerType, options = {}) {
+        await this.initialize();
+
+        const normalizedProviderType = String(providerType || '').trim();
+        const limit = Math.min(200, Math.max(1, normalizePositiveInt(options.limit, 50)));
+        const requestedPage = Math.max(1, normalizePositiveInt(options.page, 1));
+        const sort = options.sort === 'asc' || options.sort === 'desc' ? options.sort : null;
+        const healthFilter = normalizeProviderListHealthFilter(options.healthFilter);
+        const errorType = normalizeProviderListErrorType(options.errorType);
+
+        if (!normalizedProviderType) {
+            return {
+                providerType: '',
+                providers: [],
+                page: 1,
+                limit,
+                totalPages: 1,
+                returnedCount: 0,
+                sort,
+                healthFilter,
+                errorType,
+                filteredCount: 0,
+                filteredTotalPages: 1,
+                totalCount: 0,
+                healthyCount: 0,
+                usageCount: 0,
+                errorCount: 0
+            };
+        }
+
+        const summaryRows = await this.client.query(`
+SELECT
+    COUNT(*) AS total_count,
+    SUM(CASE WHEN COALESCE(s.is_healthy, 1) = 1 AND COALESCE(s.is_disabled, 0) = 0 THEN 1 ELSE 0 END) AS healthy_count,
+    SUM(COALESCE(s.usage_count, 0)) AS usage_count,
+    SUM(COALESCE(s.error_count, 0)) AS error_count
+FROM provider_registrations r
+LEFT JOIN provider_runtime_state s
+    ON s.provider_id = r.provider_id
+WHERE r.provider_type = ${sqlValue(normalizedProviderType)};
+        `);
+
+        const summaryRow = summaryRows[0] || {};
+        const totalCount = Number(summaryRow.total_count || 0);
+        const healthyCount = Number(summaryRow.healthy_count || 0);
+        const usageCount = Number(summaryRow.usage_count || 0);
+        const errorCount = Number(summaryRow.error_count || 0);
+
+        const whereConditions = [`r.provider_type = ${sqlValue(normalizedProviderType)}`];
+        if (healthFilter === 'healthy') {
+            whereConditions.push('COALESCE(s.is_healthy, 1) = 1');
+        } else if (healthFilter === 'unhealthy') {
+            whereConditions.push('COALESCE(s.is_healthy, 1) <> 1');
+        }
+        const providerErrorTypeCaseSql = buildProviderErrorTypeCaseSql();
+        if (errorType !== 'all') {
+            whereConditions.push(`${providerErrorTypeCaseSql} = ${sqlValue(errorType)}`);
+        }
+        const whereSql = whereConditions.join('\n  AND ');
+
+        const countRows = await this.client.query(`
+SELECT COUNT(*) AS count
+FROM provider_registrations r
+LEFT JOIN provider_runtime_state s
+    ON s.provider_id = r.provider_id
+WHERE ${whereSql};
+        `);
+        const filteredCount = Number(countRows[0]?.count || 0);
+        const totalPages = Math.max(1, Math.ceil(Math.max(filteredCount, 0) / limit));
+        const page = Math.min(requestedPage, totalPages);
+        const offset = (page - 1) * limit;
+        const orderSql = buildProviderListOrderSql(sort);
+
+        const rows = await this.client.query(`
+SELECT
+    r.provider_id,
+    r.provider_type,
+    r.routing_uuid,
+    r.display_name,
+    r.check_model,
+    r.project_id,
+    r.base_url,
+    r.config_json,
+    r.source_kind,
+    r.created_at,
+    r.updated_at,
+    s.is_healthy,
+    s.is_disabled,
+    s.usage_count,
+    s.error_count,
+    s.last_used_at,
+    s.last_health_check_at,
+    s.last_health_check_model,
+    s.last_error_time,
+    s.last_error_message,
+    s.scheduled_recovery_at,
+    s.refresh_count,
+    s.last_selection_seq
+FROM provider_registrations r
+LEFT JOIN provider_runtime_state s
+    ON s.provider_id = r.provider_id
+WHERE ${whereSql}
+ORDER BY ${orderSql}
+LIMIT ${limit} OFFSET ${offset};
+        `);
+
+        const providerIds = rows
+            .map((row) => row.provider_id || row.providerId)
+            .filter(Boolean);
+        const providerIdSql = buildSqlInList(providerIds);
+
+        let secretRows = [];
+        let credentialRows = [];
+        if (providerIdSql) {
+            secretRows = await this.client.query(`
+SELECT provider_id, secret_kind, secret_payload, protection_mode, updated_at
+FROM provider_inline_secrets
+WHERE provider_id IN (${providerIdSql})
+ORDER BY provider_id ASC, secret_kind ASC;
+            `);
+            credentialRows = await this.client.query(`
+SELECT
+    b.binding_target_id AS provider_id,
+    b.credential_asset_id,
+    COALESCE(fi.file_path, a.source_path) AS file_path,
+    a.source_path
+FROM credential_bindings b
+JOIN credential_assets a
+    ON a.id = b.credential_asset_id
+LEFT JOIN credential_file_index fi
+    ON fi.credential_asset_id = a.id
+   AND fi.is_primary = 1
+WHERE b.binding_type = 'provider_registration'
+  AND COALESCE(b.binding_status, 'active') = 'active'
+  AND b.binding_target_id IN (${providerIdSql})
+ORDER BY b.binding_target_id ASC, b.updated_at DESC;
+            `);
+        }
+
+        const pageSnapshot = buildProviderPoolsSnapshot(rows, secretRows, credentialRows);
+        const providers = pageSnapshot[normalizedProviderType] || [];
+
+        return {
+            providerType: normalizedProviderType,
+            providers,
+            page,
+            limit,
+            totalPages,
+            returnedCount: providers.length,
+            sort,
+            healthFilter,
+            errorType,
+            filteredCount,
+            filteredTotalPages: totalPages,
+            totalCount,
+            healthyCount,
+            usageCount,
+            errorCount
+        };
     }
 
     async exportProviderPoolsSnapshot(options = {}) {
@@ -4227,6 +4474,7 @@ const SQLITE_STORAGE_OPERATION_META = {
     hasProviderData: { phase: 'read', domain: 'provider' },
     loadProviderPoolsSnapshot: { phase: 'read', domain: 'provider' },
     loadProviderPoolsSummary: { phase: 'read', domain: 'provider' },
+    loadProviderTypePage: { phase: 'read', domain: 'provider' },
     exportProviderPoolsSnapshot: { phase: 'export', domain: 'provider' },
     replaceProviderPoolsSnapshot: { phase: 'write', domain: 'provider' },
     findCredentialAsset: { phase: 'read', domain: 'provider' },

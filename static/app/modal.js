@@ -106,14 +106,18 @@ function getUnhealthyCountEstimate() {
 
 function classifyProviderErrorType(provider = {}) {
     const message = String(provider?.lastErrorMessage || '').toLowerCase();
-    if (!message) {
+    if (!message.trim()) {
         return 'unknown';
     }
 
+    const hasTokenKeyword = /\b(token|oauth|credential|session)\b/i.test(message);
+    const hasAuthIntent = /\b(auth|authorize|authentication|unauthorized|forbidden|invalid|expired|refresh|reauth|re-authenticate|login)\b/i.test(message);
+
     if (/\b(401|403)\b/.test(message)
-        || /\b(unauthorized|forbidden|accessdenied|invalidtoken|expiredtoken|invalid[_-\s]?grant)\b/i.test(message)
+        || /\b(unauthorized|forbidden|accessdenied|access denied|invalidtoken|expiredtoken|invalid[_-\s]?grant)\b/i.test(message)
         || /\b(re-?authenticate|authentication\s+(failed|required)|login\s+required|not\s+authenticated)\b/i.test(message)
-        || /\b(refresh\s+token|token\s+refresh)\b/i.test(message)) {
+        || /\b(refresh\s+token|token\s+refresh|failed\s+to\s+refresh.*token|token.*(expired|invalid|revoked))\b/i.test(message)
+        || (hasTokenKeyword && hasAuthIntent)) {
         return 'auth';
     }
 
@@ -126,7 +130,7 @@ function classifyProviderErrorType(provider = {}) {
         return 'timeout';
     }
 
-    if (/\b(network|econnreset|econnrefused|enotfound|fetch failed|socket hang up)\b/i.test(message)) {
+    if (/\b(network|econnreset|econnrefused|enotfound|fetch failed|socket hang up|eai_again|dns)\b/i.test(message)) {
         return 'network';
     }
 
@@ -675,6 +679,15 @@ function closeProviderModal(button) {
  * @returns {string} HTML字符串
  */
 function renderProviderList(providers) {
+    if (!Array.isArray(providers) || providers.length === 0) {
+        return `
+            <div class="provider-empty-state">
+                <i class="fas fa-filter"></i>
+                <span data-i18n="modal.provider.filter.empty">${t('modal.provider.filter.empty')}</span>
+            </div>
+        `;
+    }
+
     return providers.map(provider => {
         const isHealthy = provider.isHealthy;
         const isDisabled = provider.isDisabled || false;

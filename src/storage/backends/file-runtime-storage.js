@@ -26,6 +26,97 @@ function buildProviderPoolsSummary(providerPools = {}) {
     }, {});
 }
 
+const DEFAULT_PROVIDER_PAGE_LIMIT = 50;
+const MAX_PROVIDER_PAGE_LIMIT = 200;
+
+function normalizePositiveInteger(value, fallback) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeProviderListHealthFilter(value) {
+    if (value === 'healthy' || value === 'unhealthy') {
+        return value;
+    }
+    return 'all';
+}
+
+function normalizeProviderListErrorType(value) {
+    const normalized = String(value || 'all').trim().toLowerCase();
+    const allowed = new Set(['all', 'auth', 'quota', 'timeout', 'network', 'other', 'unknown']);
+    return allowed.has(normalized) ? normalized : 'all';
+}
+
+function classifyProviderErrorType(provider = {}) {
+    const message = String(provider?.lastErrorMessage || '').toLowerCase();
+    if (!message.trim()) {
+        return 'unknown';
+    }
+
+    const hasTokenKeyword = /\b(token|oauth|credential|session)\b/i.test(message);
+    const hasAuthIntent = /\b(auth|authorize|authentication|unauthorized|forbidden|invalid|expired|refresh|reauth|re-authenticate|login)\b/i.test(message);
+
+    if (/\b(401|403)\b/.test(message)
+        || /\b(unauthorized|forbidden|accessdenied|access denied|invalidtoken|expiredtoken|invalid[_-\s]?grant)\b/i.test(message)
+        || /\b(re-?authenticate|authentication\s+(failed|required)|login\s+required|not\s+authenticated)\b/i.test(message)
+        || /\b(refresh\s+token|token\s+refresh|failed\s+to\s+refresh.*token|token.*(expired|invalid|revoked))\b/i.test(message)
+        || (hasTokenKeyword && hasAuthIntent)) {
+        return 'auth';
+    }
+
+    if (/\b(429)\b/.test(message)
+        || /\b(too many requests|rate limit|ratelimit|quota|insufficient)\b/i.test(message)) {
+        return 'quota';
+    }
+
+    if (/\b(timeout|timed out|etimedout|deadline exceeded)\b/i.test(message)) {
+        return 'timeout';
+    }
+
+    if (/\b(network|econnreset|econnrefused|enotfound|fetch failed|socket hang up|eai_again|dns)\b/i.test(message)) {
+        return 'network';
+    }
+
+    return 'other';
+}
+
+function filterProvidersByHealth(providers = [], healthFilter = 'all') {
+    if (healthFilter === 'healthy') {
+        return providers.filter((provider) => provider?.isHealthy === true);
+    }
+
+    if (healthFilter === 'unhealthy') {
+        return providers.filter((provider) => provider?.isHealthy !== true);
+    }
+
+    return providers;
+}
+
+function filterProvidersByErrorType(providers = [], errorType = 'all') {
+    if (errorType === 'all') {
+        return providers;
+    }
+
+    return providers.filter((provider) => classifyProviderErrorType(provider) === errorType);
+}
+
+function sortProvidersForDisplay(providers = [], sort = null) {
+    if (sort !== 'asc' && sort !== 'desc') {
+        return providers;
+    }
+
+    const sorted = [...providers].sort((left, right) => {
+        const leftKey = String(left?.customName || left?.uuid || '').toLowerCase();
+        const rightKey = String(right?.customName || right?.uuid || '').toLowerCase();
+        if (leftKey === rightKey) {
+            return String(left?.uuid || '').localeCompare(String(right?.uuid || ''));
+        }
+        return leftKey.localeCompare(rightKey);
+    });
+
+    return sort === 'asc' ? sorted : sorted.reverse();
+}
+
 function cloneJson(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
@@ -116,6 +207,54 @@ export class FileRuntimeStorage {
     async loadProviderPoolsSummary() {
         const providerPools = await this.loadProviderPoolsSnapshot();
         return buildProviderPoolsSummary(providerPools);
+    }
+
+    async loadProviderTypePage(providerType, options = {}) {
+        const normalizedProviderType = String(providerType || '').trim();
+        const limit = Math.min(
+            MAX_PROVIDER_PAGE_LIMIT,
+            Math.max(1, normalizePositiveInteger(options.limit, DEFAULT_PROVIDER_PAGE_LIMIT))
+        );
+        const requestedPage = Math.max(1, normalizePositiveInteger(options.page, 1));
+        const sort = options.sort === 'asc' || options.sort === 'desc' ? options.sort : null;
+        const healthFilter = normalizeProviderListHealthFilter(options.healthFilter);
+        const errorType = normalizeProviderListErrorType(options.errorType);
+        const providerPools = await this.loadProviderPoolsSnapshot();
+        const allProviders = Array.isArray(providerPools?.[normalizedProviderType])
+            ? providerPools[normalizedProviderType]
+            : [];
+
+        const totalCount = allProviders.length;
+        const healthyCount = allProviders.filter((provider) => provider?.isHealthy && !provider?.isDisabled).length;
+        const usageCount = allProviders.reduce((sum, provider) => sum + Number(provider?.usageCount || 0), 0);
+        const errorCount = allProviders.reduce((sum, provider) => sum + Number(provider?.errorCount || 0), 0);
+
+        const healthFiltered = filterProvidersByHealth(allProviders, healthFilter);
+        const typeFiltered = filterProvidersByErrorType(healthFiltered, errorType);
+        const sortedProviders = sortProvidersForDisplay(typeFiltered, sort);
+        const filteredCount = sortedProviders.length;
+        const totalPages = Math.max(1, Math.ceil(Math.max(filteredCount, 0) / limit));
+        const page = Math.min(requestedPage, totalPages);
+        const offset = (page - 1) * limit;
+        const providers = sortedProviders.slice(offset, offset + limit);
+
+        return {
+            providerType: normalizedProviderType,
+            providers,
+            page,
+            limit,
+            totalPages,
+            returnedCount: providers.length,
+            sort,
+            healthFilter,
+            errorType,
+            filteredCount,
+            filteredTotalPages: totalPages,
+            totalCount,
+            healthyCount,
+            usageCount,
+            errorCount
+        };
     }
 
     async replaceProviderPoolsSnapshot(providerPools = {}) {
@@ -751,6 +890,7 @@ function buildFileOperationDetails(operation, args = []) {
 const FILE_STORAGE_OPERATION_META = {
     initialize: { phase: 'initialize', domain: 'runtime_storage' },
     loadProviderPoolsSnapshot: { phase: 'read', domain: 'provider' },
+    loadProviderTypePage: { phase: 'read', domain: 'provider' },
     exportProviderPoolsSnapshot: { phase: 'export', domain: 'provider' },
     replaceProviderPoolsSnapshot: { phase: 'write', domain: 'provider' },
     findCredentialAsset: { phase: 'read', domain: 'provider' },
