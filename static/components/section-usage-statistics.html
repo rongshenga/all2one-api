@@ -1,0 +1,212 @@
+<link rel="stylesheet" href="components/section-usage-statistics.css">
+<section id="usage-statistics" class="section" aria-labelledby="usage-statistics-title">
+    <h2 id="usage-statistics-title">使用统计</h2>
+
+    <div class="usage-stats-shell">
+        <div class="usage-stats-toolbar">
+            <div class="usage-stats-toolbar-group">
+                <label for="usageStatsRange">时间范围</label>
+                <select id="usageStatsRange">
+                    <option value="24h">最近 24 小时</option>
+                    <option value="7d">最近 7 天</option>
+                    <option value="30d">最近 30 天</option>
+                    <option value="custom">自定义</option>
+                </select>
+            </div>
+
+            <div class="usage-stats-toolbar-group usage-stats-custom-range" id="usageStatsCustomRange" style="display:none;">
+                <label for="usageStatsFrom">开始</label>
+                <input id="usageStatsFrom" type="datetime-local">
+                <label for="usageStatsTo">结束</label>
+                <input id="usageStatsTo" type="datetime-local">
+            </div>
+
+            <div class="usage-stats-toolbar-group usage-stats-toolbar-group--bucket">
+                <label>趋势粒度</label>
+                <div class="usage-stats-segmented" id="usageStatsBucketSwitch" role="tablist" aria-label="趋势粒度">
+                    <button type="button" class="is-active" data-bucket="hour" role="tab" aria-selected="true">按小时</button>
+                    <button type="button" data-bucket="day" role="tab" aria-selected="false">按天</button>
+                </div>
+                <select id="usageStatsBucket" class="usage-stats-hidden-select" aria-hidden="true" tabindex="-1">
+                    <option value="hour" selected>小时</option>
+                    <option value="day">天</option>
+                </select>
+            </div>
+
+            <div class="usage-stats-toolbar-actions">
+                <button type="button" id="usageStatsRefreshBtn" class="btn-usage-stats btn-icon" title="刷新数据" aria-label="刷新数据">
+                    <i class="fas fa-rotate-right" aria-hidden="true"></i>
+                </button>
+                <button type="button" id="usageStatsExportCsvBtn" class="btn-usage-stats">导出 CSV</button>
+                <button type="button" id="usageStatsExportJsonBtn" class="btn-usage-stats">导出 JSON</button>
+            </div>
+        </div>
+
+        <div id="usageStatsLoading" class="usage-stats-loading" style="display:none;">
+            <i class="fas fa-spinner fa-spin"></i>
+            <span>正在加载使用统计...</span>
+        </div>
+
+        <div id="usageStatsError" class="usage-stats-error" style="display:none;"></div>
+
+        <div class="usage-stats-meta">
+            <span id="usageStatsUpdatedAt">更新时间: --</span>
+        </div>
+
+        <div id="usageStatsOverviewCards" class="usage-stats-overview"></div>
+
+        <article class="usage-stats-card usage-stats-card--wide usage-stats-health-card">
+            <header class="usage-stats-card-header">
+                <div>
+                    <h3>服务健康检测</h3>
+                </div>
+                <div class="usage-stats-health-summary">
+                    <span id="usageStatsHealthSummaryLabel" class="usage-stats-health-summary-label">最近 10 天</span>
+                    <span id="usageStatsHealthScore" class="usage-stats-health-summary-value">--</span>
+                </div>
+            </header>
+            <div id="usageStatsHealthHeatmap" class="usage-stats-health-heatmap"></div>
+            <div class="usage-stats-heatmap-footer">
+                <div class="usage-stats-health-legend" aria-hidden="true">
+                    <span class="usage-stats-health-legend-label">最早</span>
+                    <div class="usage-stats-health-legend-scale">
+                        <span class="level-0"></span>
+                        <span class="level-1"></span>
+                        <span class="level-2"></span>
+                        <span class="level-3"></span>
+                        <span class="level-4"></span>
+                    </div>
+                    <span class="usage-stats-health-legend-label">最新</span>
+                </div>
+            </div>
+        </article>
+
+        <div class="usage-stats-grid usage-stats-grid--trends">
+            <article class="usage-stats-card">
+                <header class="usage-stats-card-header">
+                    <div>
+                        <h3>请求趋势</h3>
+                        <p class="usage-stats-card-subtitle">单位：请求数</p>
+                    </div>
+                </header>
+                <div id="usageStatsRequestTrendChart" class="usage-stats-line-chart"></div>
+            </article>
+
+            <article class="usage-stats-card">
+                <header class="usage-stats-card-header">
+                    <div>
+                        <h3>Token 趋势</h3>
+                        <p class="usage-stats-card-subtitle">单位：Token</p>
+                    </div>
+                </header>
+                <div id="usageStatsTokenTrendChart" class="usage-stats-line-chart"></div>
+            </article>
+        </div>
+
+        <div class="usage-stats-grid usage-stats-grid--tables">
+            <article class="usage-stats-card">
+                <header>
+                    <h3>Model 统计 Top</h3>
+                </header>
+                <div class="usage-stats-table-wrapper">
+                    <table class="usage-stats-table">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>请求数</th>
+                                <th>Token 数</th>
+                                <th>成本</th>
+                                <th>错误率</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usageStatsModelsTableBody"></tbody>
+                    </table>
+                </div>
+            </article>
+
+            <article class="usage-stats-card">
+                <header>
+                    <h3>凭证统计 Top</h3>
+                </header>
+                <div class="usage-stats-table-wrapper">
+                    <table class="usage-stats-table">
+                        <thead>
+                            <tr>
+                                <th>Provider</th>
+                                <th>凭证</th>
+                                <th>请求数</th>
+                                <th>Token 数</th>
+                                <th>成本</th>
+                                <th>错误率</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usageStatsCredentialsTableBody"></tbody>
+                    </table>
+                </div>
+            </article>
+        </div>
+
+        <article class="usage-stats-card usage-stats-card--wide">
+            <header class="usage-stats-events-header">
+                <h3>请求事件</h3>
+                <div class="usage-stats-events-filters">
+                    <select id="usageStatsEventsStatus">
+                        <option value="">全部状态</option>
+                        <option value="success">成功</option>
+                        <option value="error">错误</option>
+                        <option value="client_disconnected">客户端断开</option>
+                    </select>
+                    <input id="usageStatsEventsKeyword" type="text" placeholder="搜索 Model/Provider/错误">
+                    <button type="button" id="usageStatsEventsApplyBtn" class="btn-usage-stats">应用</button>
+                </div>
+            </header>
+            <div class="usage-stats-table-wrapper">
+                <table class="usage-stats-table usage-stats-events-table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>Provider</th>
+                            <th>Model</th>
+                            <th>状态</th>
+                            <th>Token 数</th>
+                            <th>成本</th>
+                            <th>延迟</th>
+                            <th>错误</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usageStatsEventsTableBody"></tbody>
+                </table>
+            </div>
+            <footer class="usage-stats-pagination" id="usageStatsEventsPagination">
+                <button type="button" id="usageStatsEventsPrevBtn" class="btn-usage-stats">上一页</button>
+                <span id="usageStatsEventsPageInfo">第 1 / 1 页</span>
+                <button type="button" id="usageStatsEventsNextBtn" class="btn-usage-stats">下一页</button>
+            </footer>
+        </article>
+
+        <article class="usage-stats-card usage-stats-card--wide">
+            <header class="usage-stats-events-header">
+                <h3>Model 价格配置</h3>
+                <div class="usage-stats-events-filters">
+                    <button type="button" id="usageStatsAddPriceBtn" class="btn-usage-stats">新增行</button>
+                    <button type="button" id="usageStatsSavePricesBtn" class="btn-usage-stats primary">保存价格</button>
+                </div>
+            </header>
+            <div class="usage-stats-table-wrapper">
+                <table class="usage-stats-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Currency</th>
+                            <th>Prompt / 1K</th>
+                            <th>Completion / 1K</th>
+                            <th>更新时间</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="usageStatsPricesTableBody"></tbody>
+                </table>
+            </div>
+        </article>
+    </div>
+</section>

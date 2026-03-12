@@ -83,9 +83,9 @@ async function initializeComponents() {
         { path: `${basePath}sidebar.html`, container: '#sidebar-container', position: 'replace' },
         { path: `${basePath}section-dashboard.html`, container: '#content-container', position: 'beforeend' },
         { path: `${basePath}section-config.html`, container: '#content-container', position: 'beforeend' },
-        { path: `${basePath}section-upload-config.html`, container: '#content-container', position: 'beforeend' },
         { path: `${basePath}section-providers.html`, container: '#content-container', position: 'beforeend' },
         { path: `${basePath}section-usage.html`, container: '#content-container', position: 'beforeend' },
+        { path: `${basePath}section-usage-statistics.html`, container: '#content-container', position: 'beforeend' },
         { path: `${basePath}section-logs.html`, container: '#content-container', position: 'beforeend' },
         { path: `${basePath}section-plugins.html`, container: '#content-container', position: 'beforeend' },
     ];
@@ -102,9 +102,9 @@ async function initializeComponents() {
             { path: `${basePath}section-dashboard.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-tutorial.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-config.html`, container: '#content-container', position: 'beforeend' },
-            { path: `${basePath}section-upload-config.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-providers.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-usage.html`, container: '#content-container', position: 'beforeend' },
+            { path: `${basePath}section-usage-statistics.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-logs.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-plugins.html`, container: '#content-container', position: 'beforeend' },
         ];

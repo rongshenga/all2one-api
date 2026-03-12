@@ -9,12 +9,6 @@ import { updateModelsProviderConfigs } from './models-manager.js';
 import { updateTutorialProviderConfigs } from './tutorial-manager.js';
 import { updateUsageProviderConfigs } from './usage-manager.js';
 import { updateConfigProviderConfigs } from './config-manager.js';
-import {
-    loadConfigList,
-    updateProviderFilterOptions,
-    reloadConfig as reloadUploadConfig,
-    downloadAllConfigs
-} from './upload-config-manager.js';
 import { setServiceMode } from './event-handlers.js';
 
 // 保存初始服务器时间
@@ -154,8 +148,8 @@ export function buildRuntimeStorageDiagnosticsViewModel(systemInfo = {}, options
                 disabled: readOnly || isLoading
             },
             export: {
-                visible: true,
-                disabled: readOnly || isLoading
+                visible: false,
+                disabled: true
             },
             rollback: {
                 visible: true,
@@ -273,7 +267,7 @@ export function renderRuntimeStorageDiagnostics(viewModel, container = ensureRun
 }
 
 export async function executeRuntimeStorageReloadAction({
-    reloadConfigFn = reloadUploadConfig,
+    reloadConfigFn = async () => await window.apiClient.post('/reload-config'),
     refreshProvidersFn = loadProviders,
     refreshSystemInfoFn = loadSystemInfo,
     setLoading = () => {}
@@ -294,10 +288,14 @@ export async function executeRuntimeStorageReloadAction({
 }
 
 export async function executeRuntimeStorageExportAction({
-    exportFn = downloadAllConfigs,
+    exportFn = null,
     refreshSystemInfoFn = loadSystemInfo,
     setLoading = () => {}
 } = {}) {
+    if (typeof exportFn !== 'function') {
+        return { skipped: true };
+    }
+
     setLoading(true);
     try {
         const result = await exportFn();
@@ -317,7 +315,6 @@ export async function executeRuntimeStorageRollbackAction({
     promptRunIdFn = (defaultRunId = '') => window.prompt('请输入要回滚的迁移 runId', defaultRunId),
     confirmFn = (message) => window.confirm(message),
     notify = showToast,
-    refreshConfigListFn = loadConfigList,
     refreshProvidersFn = loadProviders,
     refreshSystemInfoFn = loadSystemInfo
 } = {}) {
@@ -342,9 +339,6 @@ export async function executeRuntimeStorageRollbackAction({
             runId: promptedRunId
         });
         notify('成功', `运行时存储回滚已完成（${promptedRunId}）`, 'success');
-        if (typeof refreshConfigListFn === 'function') {
-            await refreshConfigListFn();
-        }
         if (typeof refreshProvidersFn === 'function') {
             await refreshProvidersFn();
         }
@@ -693,9 +687,6 @@ async function loadProvidersInternal(options = {}) {
                 supportedProviderCount: Array.isArray(cachedSupportedProviders) ? cachedSupportedProviders.length : 0
             });
             const providerConfigs = getProviderConfigs(cachedSupportedProviders);
-            
-            // 动态更新凭据文件管理的提供商类型筛选项
-            updateProviderFilterOptions(providerConfigs);
             
             // 动态更新仪表盘页面的路径路由调用示例
             renderRoutingExamples(providerConfigs);
@@ -1877,7 +1868,6 @@ function showCodexBatchImportModal(providerType = 'openai-codex-oauth') {
                             if (successCount > 0) {
                                 importSuccess = true;
                                 await loadProviders();
-                                await loadConfigList();
                             }
                         } else if (eventType === 'error') {
                             throw new Error(data.error || 'batch import failed');
@@ -2523,7 +2513,6 @@ function showGeminiBatchImportModal(providerType) {
                                     if (data.successCount > 0) {
                                         importSuccess = true;
                                         loadProviders();
-                                        loadConfigList();
                                     }
                                 } else if (eventType === 'error') {
                                     throw new Error(data.error);
@@ -2814,7 +2803,6 @@ function showKiroBatchImportModal() {
                                     if (data.successCount > 0) {
                                         importSuccess = true;
                                         loadProviders();
-                                        loadConfigList();
                                     }
                                     
                                 } else if (eventType === 'error') {
@@ -3631,7 +3619,6 @@ function showKiroAwsImportModal() {
                                         if (data.successCount > 0) {
                                             importSuccess = true;
                                             loadProviders();
-                                            loadConfigList();
                                         }
                                         
                                     } else if (eventType === 'error') {
@@ -3666,7 +3653,6 @@ function showKiroAwsImportModal() {
                     
                     // 刷新提供商列表和配置列表
                     loadProviders();
-                    loadConfigList();
                 } else if (response.error === 'duplicate') {
                     // 显示重复凭据警告
                     const existingPath = response.existingPath || '';
@@ -4055,7 +4041,6 @@ function showAuthModal(authUrl, authInfo) {
             
             // 授权成功后刷新配置和提供商列表
             loadProviders();
-            loadConfigList();
         };
         oauthSuccessListener = handleOAuthSuccess;
         window.addEventListener('oauth_success_event', oauthSuccessListener);

@@ -729,7 +729,7 @@ function renderProviderList(providers) {
                             </span> |
                             <span class="disabled-status">
                                 <i class="${disabledIcon}"></i>
-                                <span data-i18n="upload.detail.status">状态</span>: <span data-i18n="${isDisabled ? 'modal.provider.status.disabled' : 'modal.provider.status.enabled'}">${disabledText}</span>
+                                <span data-i18n="modal.provider.statusLabel">状态</span>: <span data-i18n="${isDisabled ? 'modal.provider.status.disabled' : 'modal.provider.status.enabled'}">${disabledText}</span>
                             </span> |
                             <span data-i18n="modal.provider.usageCount">使用次数</span>: ${provider.usageCount || 0} |
                             <span data-i18n="modal.provider.errorCount">失败次数</span>: ${provider.errorCount || 0} |

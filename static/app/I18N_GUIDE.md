@@ -47,7 +47,6 @@ showToast(t('common.success'), t('config.saved'), 'success');
 - `dashboard.*`：仪表盘
 - `config.*`：系统配置
 - `modal.*`：弹窗
-- `upload.*`：上传与凭据管理
 - `usage.*`：用量信息
 - `logs.*`：日志相关
 - `common.*`：通用提示

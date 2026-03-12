@@ -38,6 +38,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - `npm test`: run Jest test suite.
 - `npm run test:coverage`: generate coverage reports in `coverage/`.
 - `docker compose -f docker/docker-compose.build.yml up -d --build`: build and run from source image.
+- 前端改动后**不需要**执行构建产物生成（不要求执行 `npm run build`，默认不生成 `dist/`）。
 - Note: `test:unit`, `test:integration`, and `test:summary` currently reference missing files; do not rely on them until restored.
 
 ## Coding Style & Naming Conventions

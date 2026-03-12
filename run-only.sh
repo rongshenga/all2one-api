@@ -76,4 +76,8 @@ echo "访问 http://localhost:${APP_PORT} 查看管理界面"
 echo "按 Ctrl+C 停止服务器"
 echo
 
-node src/core/master.js --port "${APP_PORT}" "${EXTRA_ARGS[@]}"
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    node src/core/master.js --port "${APP_PORT}" "${EXTRA_ARGS[@]}"
+else
+    node src/core/master.js --port "${APP_PORT}"
+fi

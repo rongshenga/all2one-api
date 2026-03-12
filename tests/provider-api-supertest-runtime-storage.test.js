@@ -2,7 +2,6 @@ import os from 'os';
 import path from 'path';
 import http from 'http';
 import request from 'supertest';
-import AdmZip from 'adm-zip';
 import { promises as fs } from 'fs';
 import { jest } from '@jest/globals';
 
@@ -165,7 +164,7 @@ describe('Provider API runtime storage HTTP regression', () => {
         mockLogger.cleanupOldLogs.mockClear();
     });
 
-    test('should run provider add/list/refresh/export flow through supertest in db mode', async () => {
+    test('should run provider add/list/refresh flow through supertest in db mode', async () => {
         if (!socketSupported) {
             expect(true).toBe(true);
             return;
@@ -221,20 +220,18 @@ describe('Provider API runtime storage HTTP regression', () => {
             expect(refreshRes.body.oldUuid).toBe(createdUuid);
             expect(refreshRes.body.newUuid).not.toBe(createdUuid);
 
-            const exportRes = await request(server)
+            const removedUploadRouteRes = await request(server)
                 .get('/api/upload-configs/download-all')
                 .set('Authorization', 'Bearer mock');
 
-            expect(exportRes.status).toBe(200);
-            const zip = new AdmZip(exportRes.body);
-            const providerPoolsEntry = zip.getEntry('provider_pools.json');
-            expect(providerPoolsEntry).toBeTruthy();
-            const exportedProviderPools = JSON.parse(providerPoolsEntry.getData().toString('utf8'));
-            expect(exportedProviderPools['grok-custom'][0]).toMatchObject({
-                uuid: refreshRes.body.newUuid,
-                customName: 'HTTP Grok',
-                GROK_COOKIE_TOKEN: 'http-token'
-            });
+            expect(removedUploadRouteRes.status).toBe(404);
+
+            const removedQuickLinkRouteRes = await request(server)
+                .post('/api/quick-link-provider')
+                .set('Authorization', 'Bearer mock')
+                .send({ filePaths: ['configs/gemini/account-1.json'] });
+
+            expect(removedQuickLinkRouteRes.status).toBe(404);
 
             const snapshot = await getRuntimeStorage().exportProviderPoolsSnapshot();
             expect(snapshot['grok-custom'][0].uuid).toBe(refreshRes.body.newUuid);

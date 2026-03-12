@@ -30,8 +30,7 @@ import {
 
 import {
     initEventStream,
-    setProviderLoaders,
-    setConfigLoaders
+    setProviderLoaders
 } from './event-stream.js';
 
 import {
@@ -59,19 +58,14 @@ import {
 } from './routing-examples.js';
 
 import {
-    initUploadConfigManager,
-    loadConfigList,
-    viewConfig,
-    deleteConfig,
-    closeConfigModal,
-    copyConfigContent,
-    reloadConfig
-} from './upload-config-manager.js';
-
-import {
     initUsageManager,
     refreshUsage
 } from './usage-manager.js';
+
+import {
+    initUsageStatisticsManager,
+    refreshUsageStatistics
+} from './usage-statistics-manager.js';
 
 import {
     initPluginManager,
@@ -138,17 +132,20 @@ function initApp() {
 
     try {
         runInitStep('data loaders', () => setDataLoaders(loadInitialData, saveConfiguration));
-        runInitStep('reload config hook', () => setReloadConfig(reloadConfig));
+        runInitStep('reload config hook', () => setReloadConfig(async () => {
+            const result = await window.apiClient.post('/reload-config');
+            showToast(t('common.success'), result.message || t('common.success'), 'success');
+            return result;
+        }));
         runInitStep('provider loaders', () => setProviderLoaders(loadProviders, refreshProviderConfig));
-        runInitStep('config loaders', () => setConfigLoaders(loadConfigList));
 
         runInitStep('navigation', initNavigation);
         runInitStep('event listeners', initEventListeners);
         runInitStep('event stream', initEventStream);
         runInitStep('file upload', initFileUpload);
         runInitStep('routing examples', initRoutingExamples);
-        runInitStep('upload config manager', initUploadConfigManager);
         runInitStep('usage manager', initUsageManager);
+        runInitStep('usage statistics manager', initUsageStatisticsManager);
         runInitStep('plugin manager', initPluginManager);
         runInitStep('tutorial manager', initTutorialManager);
         runInitStep('mobile menu', initMobileMenu);
@@ -270,16 +267,9 @@ window.showAuthModal = showAuthModal;
 window.executeGenerateAuthUrl = executeGenerateAuthUrl;
 window.handleGenerateAuthUrl = handleGenerateAuthUrl;
 
-// 配置管理相关全局函数
-window.viewConfig = viewConfig;
-window.deleteConfig = deleteConfig;
-window.loadConfigList = loadConfigList;
-window.closeConfigModal = closeConfigModal;
-window.copyConfigContent = copyConfigContent;
-window.reloadConfig = reloadConfig;
-
 // 用量管理相关全局函数
 window.refreshUsage = refreshUsage;
+window.refreshUsageStatistics = refreshUsageStatistics;
 
 // 插件管理相关全局函数
 window.togglePlugin = togglePlugin;

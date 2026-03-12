@@ -103,6 +103,73 @@ class UsageStorageDomainFacade extends StorageDomainFacade {
     async markInterruptedRefreshTasks() {
         return await this.storage.markInterruptedUsageRefreshTasks();
     }
+
+    async appendStatisticsEvents(events = []) {
+        if (typeof this.storage.appendUsageStatisticsEvents !== 'function') {
+            return { insertedCount: 0 };
+        }
+        return await this.storage.appendUsageStatisticsEvents(events);
+    }
+
+    async queryStatisticsOverview(options = {}) {
+        if (typeof this.storage.queryUsageStatisticsOverview !== 'function') {
+            return null;
+        }
+        return await this.storage.queryUsageStatisticsOverview(options);
+    }
+
+    async queryStatisticsTrends(options = {}) {
+        if (typeof this.storage.queryUsageStatisticsTrends !== 'function') {
+            return { points: [] };
+        }
+        return await this.storage.queryUsageStatisticsTrends(options);
+    }
+
+    async queryStatisticsHeatmap(options = {}) {
+        if (typeof this.storage.queryUsageStatisticsHeatmap !== 'function') {
+            return { cells: [] };
+        }
+        return await this.storage.queryUsageStatisticsHeatmap(options);
+    }
+
+    async queryStatisticsDimensions(options = {}) {
+        if (typeof this.storage.queryUsageStatisticsDimensions !== 'function') {
+            return { items: [] };
+        }
+        return await this.storage.queryUsageStatisticsDimensions(options);
+    }
+
+    async queryStatisticsEvents(options = {}) {
+        if (typeof this.storage.queryUsageStatisticsEvents !== 'function') {
+            return {
+                totalCount: 0,
+                page: 1,
+                limit: 50,
+                totalPages: 1,
+                hasPrevPage: false,
+                hasNextPage: false,
+                items: []
+            };
+        }
+        return await this.storage.queryUsageStatisticsEvents(options);
+    }
+
+    async listStatisticsModelPrices() {
+        if (typeof this.storage.listUsageStatisticsModelPrices !== 'function') {
+            return [];
+        }
+        return await this.storage.listUsageStatisticsModelPrices();
+    }
+
+    async upsertStatisticsModelPrices(prices = []) {
+        if (typeof this.storage.upsertUsageStatisticsModelPrices !== 'function') {
+            return {
+                updatedCount: 0,
+                prices: []
+            };
+        }
+        return await this.storage.upsertUsageStatisticsModelPrices(prices);
+    }
 }
 
 class SessionStorageDomainFacade extends StorageDomainFacade {
@@ -339,6 +406,38 @@ export class RuntimeStorageFacade {
 
     async markInterruptedUsageRefreshTasks() {
         return await this.usage.markInterruptedRefreshTasks();
+    }
+
+    async appendUsageStatisticsEvents(events = []) {
+        return await this.usage.appendStatisticsEvents(events);
+    }
+
+    async queryUsageStatisticsOverview(options = {}) {
+        return await this.usage.queryStatisticsOverview(options);
+    }
+
+    async queryUsageStatisticsTrends(options = {}) {
+        return await this.usage.queryStatisticsTrends(options);
+    }
+
+    async queryUsageStatisticsHeatmap(options = {}) {
+        return await this.usage.queryStatisticsHeatmap(options);
+    }
+
+    async queryUsageStatisticsDimensions(options = {}) {
+        return await this.usage.queryStatisticsDimensions(options);
+    }
+
+    async queryUsageStatisticsEvents(options = {}) {
+        return await this.usage.queryStatisticsEvents(options);
+    }
+
+    async listUsageStatisticsModelPrices() {
+        return await this.usage.listStatisticsModelPrices();
+    }
+
+    async upsertUsageStatisticsModelPrices(prices = []) {
+        return await this.usage.upsertStatisticsModelPrices(prices);
     }
 
     async getAdminPasswordHash() {

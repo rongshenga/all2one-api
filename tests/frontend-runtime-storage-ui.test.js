@@ -170,7 +170,6 @@ describe('frontend event stream and usage manager', () => {
     let showToast;
     let loadProviders;
     let refreshProviderConfig;
-    let loadConfigList;
     let dispatchEvent;
     let eventStreamModule;
     let usageManagerModule;
@@ -190,7 +189,6 @@ describe('frontend event stream and usage manager', () => {
         showToast = jest.fn();
         loadProviders = jest.fn();
         refreshProviderConfig = jest.fn();
-        loadConfigList = jest.fn();
         dispatchEvent = jest.fn();
         fetchCalls = [];
 
@@ -319,7 +317,6 @@ describe('frontend event stream and usage manager', () => {
         usageManagerModule = await import('../static/app/usage-manager.js');
 
         eventStreamModule.setProviderLoaders(loadProviders, refreshProviderConfig);
-        eventStreamModule.setConfigLoaders(loadConfigList);
     });
 
     test('should render connected and disconnected server status states', async () => {
@@ -333,7 +330,7 @@ describe('frontend event stream and usage manager', () => {
         expect(elements.serverStatus.innerHTML).toContain('header.status.disconnected');
     });
 
-    test('should route provider and config updates to the correct loaders', () => {
+    test('should route provider updates to the correct loaders', () => {
         const modal = {
             getAttribute: jest.fn(() => 'grok-custom')
         };
@@ -347,11 +344,6 @@ describe('frontend event stream and usage manager', () => {
             showLoading: false
         }));
 
-        eventStreamModule.handleConfigUpdate({ action: 'delete' });
-        eventStreamModule.handleConfigUpdate({ action: 'add' });
-        eventStreamModule.handleConfigUpdate({ action: 'update' });
-        eventStreamModule.handleConfigUpdate({ action: 'unknown' });
-        expect(loadConfigList).toHaveBeenCalledTimes(4);
     });
 
     test('should dispatch usage refresh events and suppress toast when usage section is active', () => {
@@ -952,12 +944,6 @@ describe('frontend runtime storage diagnostics panel', () => {
         }));
         jest.doMock('../static/app/config-manager.js', () => ({
             updateConfigProviderConfigs: jest.fn()
-        }));
-        jest.doMock('../static/app/upload-config-manager.js', () => ({
-            loadConfigList: jest.fn(),
-            updateProviderFilterOptions: jest.fn(),
-            reloadConfig: jest.fn(),
-            downloadAllConfigs: jest.fn()
         }));
         jest.doMock('../static/app/event-handlers.js', () => ({
             setServiceMode: jest.fn()

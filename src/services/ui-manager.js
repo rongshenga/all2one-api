@@ -7,8 +7,8 @@ import * as auth from '../ui-modules/auth.js';
 import * as configApi from '../ui-modules/config-api.js';
 import * as providerApi from '../ui-modules/provider-api.js';
 import * as usageApi from '../ui-modules/usage-api.js';
+import * as usageStatisticsApi from '../ui-modules/usage-statistics-api.js';
 import * as pluginApi from '../ui-modules/plugin-api.js';
-import * as uploadConfigApi from '../ui-modules/upload-config-api.js';
 import * as systemApi from '../ui-modules/system-api.js';
 import * as oauthApi from '../ui-modules/oauth-api.js';
 import * as eventBroadcast from '../ui-modules/event-broadcast.js';
@@ -346,39 +346,6 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await eventBroadcast.handleEvents(req, res);
     }
 
-    // Get upload configuration files list
-    if (method === 'GET' && pathParam === '/api/upload-configs') {
-        return await uploadConfigApi.handleGetUploadConfigs(req, res, currentConfig, providerPoolManager);
-    }
-
-    // View specific configuration file
-    const viewConfigMatch = pathParam.match(/^\/api\/upload-configs\/view\/(.+)$/);
-    if (method === 'GET' && viewConfigMatch) {
-        const filePath = decodeURIComponent(viewConfigMatch[1]);
-        return await uploadConfigApi.handleViewConfigFile(req, res, filePath);
-    }
-
-    // Delete specific configuration file
-    const deleteConfigMatch = pathParam.match(/^\/api\/upload-configs\/delete\/(.+)$/);
-    if (method === 'DELETE' && deleteConfigMatch) {
-        const filePath = decodeURIComponent(deleteConfigMatch[1]);
-        return await uploadConfigApi.handleDeleteConfigFile(req, res, filePath);
-    }
-
-    // Download all configs as zip
-    if (method === 'GET' && pathParam === '/api/upload-configs/download-all') {
-        return await uploadConfigApi.handleDownloadAllConfigs(req, res, currentConfig);
-    }
-
-    // Delete all unbound config files
-    if (method === 'DELETE' && pathParam === '/api/upload-configs/delete-unbound') {
-        return await uploadConfigApi.handleDeleteUnboundConfigs(req, res, currentConfig, providerPoolManager);
-    }
-
-    // Quick link config to corresponding provider based on directory
-    if (method === 'POST' && pathParam === '/api/quick-link-provider') {
-        return await providerApi.handleQuickLinkProvider(req, res, currentConfig, providerPoolManager);
-    }
 
     // Get usage limits for all providers
     if (method === 'GET' && pathParam === '/api/usage') {
@@ -406,6 +373,45 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     if (method === 'GET' && usageProviderMatch) {
         const providerType = decodeURIComponent(usageProviderMatch[1]);
         return await usageApi.handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
+    }
+
+    // Usage statistics overview
+    if (method === 'GET' && pathParam === '/api/usage-statistics/overview') {
+        return await usageStatisticsApi.handleGetUsageStatisticsOverview(req, res);
+    }
+
+    // Usage statistics trends
+    if (method === 'GET' && pathParam === '/api/usage-statistics/trends') {
+        return await usageStatisticsApi.handleGetUsageStatisticsTrends(req, res);
+    }
+
+    // Usage statistics heatmap
+    if (method === 'GET' && pathParam === '/api/usage-statistics/heatmap') {
+        return await usageStatisticsApi.handleGetUsageStatisticsHeatmap(req, res);
+    }
+
+    // Usage statistics dimensions
+    if (method === 'GET' && pathParam === '/api/usage-statistics/dimensions/models') {
+        return await usageStatisticsApi.handleGetUsageStatisticsModelDimensions(req, res);
+    }
+    if (method === 'GET' && pathParam === '/api/usage-statistics/dimensions/credentials') {
+        return await usageStatisticsApi.handleGetUsageStatisticsCredentialDimensions(req, res);
+    }
+
+    // Usage statistics events and export
+    if (method === 'GET' && pathParam === '/api/usage-statistics/events') {
+        return await usageStatisticsApi.handleGetUsageStatisticsEvents(req, res);
+    }
+    if (method === 'GET' && pathParam === '/api/usage-statistics/export') {
+        return await usageStatisticsApi.handleExportUsageStatistics(req, res);
+    }
+
+    // Usage statistics model prices
+    if (method === 'GET' && pathParam === '/api/usage-statistics/prices') {
+        return await usageStatisticsApi.handleGetUsageStatisticsPrices(req, res);
+    }
+    if (method === 'PUT' && pathParam === '/api/usage-statistics/prices') {
+        return await usageStatisticsApi.handlePutUsageStatisticsPrices(req, res);
     }
 
     // Reload configuration files

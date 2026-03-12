@@ -1,10 +1,8 @@
 import { jest } from '@jest/globals';
 
 const mockShowToast = jest.fn();
-const mockLoadConfigList = jest.fn();
 const mockReloadConfig = jest.fn();
 const mockDownloadAllConfigs = jest.fn();
-const mockUpdateProviderFilterOptions = jest.fn();
 const mockSetServiceMode = jest.fn();
 const mockUpdateProviderStats = jest.fn();
 const mockGetProviderConfigs = jest.fn(() => []);
@@ -34,7 +32,7 @@ function translate(key, params = {}) {
         'modal.provider.lastUsed': 'Last Used',
         'modal.provider.lastCheck': 'Last Check',
         'modal.provider.checkModel': 'Check Model',
-        'upload.detail.status': 'Status',
+        'modal.provider.statusLabel': 'Status',
         'common.success': '成功',
         'common.error': '错误'
     };
@@ -166,12 +164,6 @@ async function importProviderManagerModule() {
     }));
     jest.doMock('../static/app/config-manager.js', () => ({
         updateConfigProviderConfigs: jest.fn()
-    }));
-    jest.doMock('../static/app/upload-config-manager.js', () => ({
-        loadConfigList: mockLoadConfigList,
-        updateProviderFilterOptions: mockUpdateProviderFilterOptions,
-        reloadConfig: mockReloadConfig,
-        downloadAllConfigs: mockDownloadAllConfigs
     }));
     jest.doMock('../static/app/event-handlers.js', () => ({
         setServiceMode: mockSetServiceMode
@@ -424,7 +416,6 @@ describe('Runtime storage dashboard diagnostics UI', () => {
         const loadingStates = [];
         const refreshProvidersFn = jest.fn();
         const refreshSystemInfoFn = jest.fn();
-        const refreshConfigListFn = jest.fn();
         const apiClient = {
             post: jest.fn().mockResolvedValue({ success: true })
         };
@@ -448,7 +439,6 @@ describe('Runtime storage dashboard diagnostics UI', () => {
             runId: 'run-88',
             confirmFn: () => true,
             notify: mockShowToast,
-            refreshConfigListFn,
             refreshProvidersFn,
             refreshSystemInfoFn,
             setLoading: (value) => loadingStates.push(value)
@@ -457,7 +447,6 @@ describe('Runtime storage dashboard diagnostics UI', () => {
         expect(mockReloadConfig).toHaveBeenCalledTimes(1);
         expect(mockDownloadAllConfigs).toHaveBeenCalledTimes(1);
         expect(apiClient.post).toHaveBeenCalledWith('/runtime-storage/rollback', { runId: 'run-88' });
-        expect(refreshConfigListFn).toHaveBeenCalledTimes(1);
         expect(refreshProvidersFn).toHaveBeenCalledTimes(2);
         expect(refreshSystemInfoFn).toHaveBeenCalledTimes(3);
         expect(loadingStates).toEqual([true, false, true, false, true, false]);

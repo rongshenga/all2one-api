@@ -1436,6 +1436,255 @@ function createEmptyPotluckKeyStore() {
     };
 }
 
+function normalizeUsageStatisticsIso(value, fallback = null) {
+    if (!value || typeof value !== 'string') {
+        return fallback;
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return fallback;
+    }
+
+    return parsed.toISOString();
+}
+
+function normalizeUsageStatisticsBucket(value) {
+    return String(value || 'hour').trim().toLowerCase() === 'day' ? 'day' : 'hour';
+}
+
+function normalizeUsageStatisticsDimension(value) {
+    const normalized = String(value || 'models').trim().toLowerCase();
+    if (normalized === 'credentials' || normalized === 'callers') {
+        return normalized;
+    }
+    return 'models';
+}
+
+function normalizeUsageStatisticsSort(value, fallback = 'desc') {
+    const normalized = String(value || fallback).trim().toLowerCase();
+    return normalized === 'asc' ? 'asc' : 'desc';
+}
+
+function normalizeUsageStatisticsLimit(value, fallback = 50, max = 500) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return fallback;
+    }
+
+    return Math.min(max, Math.max(1, parsed));
+}
+
+function normalizeUsageStatisticsOffset(value, fallback = 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return fallback;
+    }
+    return parsed;
+}
+
+function normalizeUsageStatisticsTimeRange(options = {}) {
+    const now = new Date();
+    const to = normalizeUsageStatisticsIso(options.to, now.toISOString());
+    const from = normalizeUsageStatisticsIso(
+        options.from,
+        new Date(new Date(to).getTime() - (24 * 60 * 60 * 1000)).toISOString()
+    );
+
+    if (new Date(from).getTime() > new Date(to).getTime()) {
+        return {
+            from: new Date(new Date(to).getTime() - (24 * 60 * 60 * 1000)).toISOString(),
+            to
+        };
+    }
+
+    return { from, to };
+}
+
+function normalizeUsageStatisticsFilters(options = {}) {
+    const range = normalizeUsageStatisticsTimeRange(options);
+    const bucket = normalizeUsageStatisticsBucket(options.bucket);
+    const limit = normalizeUsageStatisticsLimit(options.limit, 50, 500);
+    const offset = normalizeUsageStatisticsOffset(options.offset, 0);
+    const sort = normalizeUsageStatisticsSort(options.sort, 'desc');
+
+    return {
+        ...range,
+        bucket,
+        limit,
+        offset,
+        sort,
+        provider: typeof options.provider === 'string' && options.provider.trim() ? options.provider.trim() : null,
+        model: typeof options.model === 'string' && options.model.trim() ? options.model.trim() : null,
+        authType: typeof options.authType === 'string' && options.authType.trim() ? options.authType.trim() : null,
+        authSubjectHash: typeof options.authSubjectHash === 'string' && options.authSubjectHash.trim() ? options.authSubjectHash.trim() : null,
+        requestStatus: typeof options.requestStatus === 'string' && options.requestStatus.trim() ? options.requestStatus.trim() : null,
+        endpointType: typeof options.endpointType === 'string' && options.endpointType.trim() ? options.endpointType.trim() : null,
+        keyword: typeof options.keyword === 'string' && options.keyword.trim() ? options.keyword.trim().toLowerCase() : null,
+        isStream: options.isStream === true || options.isStream === false
+            ? options.isStream
+            : (String(options.isStream || '').trim() === '1' ? true : (String(options.isStream || '').trim() === '0' ? false : null)),
+        dimension: normalizeUsageStatisticsDimension(options.dimension)
+    };
+}
+
+function buildUsageStatisticsWhereClause(filters = {}, tableAlias = '') {
+    const prefix = tableAlias ? `${tableAlias}.` : '';
+    const clauses = [
+        `${prefix}occurred_at >= ${sqlValue(filters.from)}`,
+        `${prefix}occurred_at <= ${sqlValue(filters.to)}`
+    ];
+
+    if (filters.provider) {
+        clauses.push(`${prefix}to_provider = ${sqlValue(filters.provider)}`);
+    }
+    if (filters.model) {
+        clauses.push(`${prefix}model = ${sqlValue(filters.model)}`);
+    }
+    if (filters.authType) {
+        clauses.push(`${prefix}auth_type = ${sqlValue(filters.authType)}`);
+    }
+    if (filters.authSubjectHash) {
+        clauses.push(`${prefix}auth_subject_hash = ${sqlValue(filters.authSubjectHash)}`);
+    }
+    if (filters.requestStatus) {
+        clauses.push(`${prefix}request_status = ${sqlValue(filters.requestStatus)}`);
+    }
+    if (filters.endpointType) {
+        clauses.push(`${prefix}endpoint_type = ${sqlValue(filters.endpointType)}`);
+    }
+    if (filters.isStream === true) {
+        clauses.push(`${prefix}is_stream = 1`);
+    }
+    if (filters.isStream === false) {
+        clauses.push(`${prefix}is_stream = 0`);
+    }
+    if (filters.keyword) {
+        clauses.push(`LOWER(COALESCE(${prefix}model, '') || ' ' || COALESCE(${prefix}error_message, '') || ' ' || COALESCE(${prefix}to_provider, '') || ' ' || COALESCE(${prefix}provider_uuid, '')) LIKE ${sqlValue(`%${filters.keyword}%`)}`);
+    }
+
+    return clauses.join(' AND ');
+}
+
+function buildUsageStatisticsCostSql(promptExpr = 'e.prompt_tokens', completionExpr = 'e.completion_tokens', priceAlias = 'p') {
+    return `(COALESCE(${promptExpr}, 0) / 1000.0) * COALESCE(${priceAlias}.prompt_price_per_1k, 0) + (COALESCE(${completionExpr}, 0) / 1000.0) * COALESCE(${priceAlias}.completion_price_per_1k, 0)`;
+}
+
+function buildUsageStatisticsBucketSql(bucket = 'hour', fieldExpr = 'e.occurred_at') {
+    if (bucket === 'day') {
+        return `strftime('%Y-%m-%dT00:00:00.000Z', ${fieldExpr})`;
+    }
+
+    return `strftime('%Y-%m-%dT%H:00:00.000Z', ${fieldExpr})`;
+}
+
+function normalizeUsageStatisticsEventRecord(event = {}, index = 0, fallbackTimestamp = null) {
+    if (!event || typeof event !== 'object') {
+        return null;
+    }
+
+    const occurredAt = normalizeUsageStatisticsIso(event.occurredAt, fallbackTimestamp || nowIso());
+    const createdAt = normalizeUsageStatisticsIso(event.createdAt, fallbackTimestamp || nowIso());
+    const id = typeof event.id === 'string' && event.id.trim()
+        ? event.id.trim()
+        : `usage_evt_${hashValue(`${occurredAt}::${event.model || 'unknown'}::${event.providerUuid || 'unknown'}::${index}`).slice(0, 24)}`;
+
+    const statusCode = Number.parseInt(event.statusCode, 10);
+    const latencyMs = Number.parseInt(event.latencyMs, 10);
+
+    const toInt = (value, fallback = 0) => {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+    };
+
+    return {
+        id,
+        occurred_at: occurredAt,
+        created_at: createdAt,
+        request_path: typeof event.requestPath === 'string' ? event.requestPath : null,
+        endpoint_type: typeof event.endpointType === 'string' ? event.endpointType : null,
+        is_stream: event.isStream === true || Number(event.isStream) === 1 ? 1 : 0,
+        from_provider: typeof event.fromProvider === 'string' ? event.fromProvider : null,
+        to_provider: typeof event.toProvider === 'string' ? event.toProvider : null,
+        provider_uuid: typeof event.providerUuid === 'string' ? event.providerUuid : null,
+        provider_custom_name: typeof event.providerCustomName === 'string' ? event.providerCustomName : null,
+        model: typeof event.model === 'string' ? event.model : null,
+        auth_type: typeof event.authType === 'string' ? event.authType : null,
+        auth_subject_hash: typeof event.authSubjectHash === 'string' ? event.authSubjectHash : null,
+        auth_subject_mask: typeof event.authSubjectMask === 'string' ? event.authSubjectMask : null,
+        request_status: typeof event.requestStatus === 'string' && event.requestStatus.trim() ? event.requestStatus.trim() : 'error',
+        status_code: Number.isFinite(statusCode) ? statusCode : null,
+        error_code: typeof event.errorCode === 'string' ? event.errorCode : null,
+        error_message: typeof event.errorMessage === 'string' ? event.errorMessage : null,
+        latency_ms: Number.isFinite(latencyMs) && latencyMs >= 0 ? latencyMs : 0,
+        prompt_tokens: toInt(event.promptTokens, 0),
+        completion_tokens: toInt(event.completionTokens, 0),
+        total_tokens: toInt(event.totalTokens, Math.max(0, toInt(event.promptTokens, 0) + toInt(event.completionTokens, 0))),
+        cached_tokens: toInt(event.cachedTokens, 0),
+        reasoning_tokens: toInt(event.reasoningTokens, 0),
+        usage_incomplete: toInt(event.usageIncomplete, 0) > 0 ? 1 : 0,
+        meta_json: typeof event.metaJson === 'string'
+            ? event.metaJson
+            : (event.meta && typeof event.meta === 'object' ? JSON.stringify(event.meta) : null)
+    };
+}
+
+function parseUsageStatisticsEventRow(row = {}) {
+    return {
+        id: row.id,
+        occurredAt: normalizeIsoOrNull(row.occurred_at) || row.occurred_at || null,
+        createdAt: normalizeIsoOrNull(row.created_at) || row.created_at || null,
+        requestPath: row.request_path || null,
+        endpointType: row.endpoint_type || null,
+        isStream: Number(row.is_stream || 0) !== 0,
+        fromProvider: row.from_provider || null,
+        toProvider: row.to_provider || null,
+        providerUuid: row.provider_uuid || null,
+        providerCustomName: row.provider_custom_name || null,
+        model: row.model || null,
+        authType: row.auth_type || null,
+        authSubjectHash: row.auth_subject_hash || null,
+        authSubjectMask: row.auth_subject_mask || null,
+        requestStatus: row.request_status || 'unknown',
+        statusCode: row.status_code === null || row.status_code === undefined ? null : Number(row.status_code),
+        errorCode: row.error_code || null,
+        errorMessage: row.error_message || null,
+        latencyMs: Number(row.latency_ms || 0),
+        promptTokens: Number(row.prompt_tokens || 0),
+        completionTokens: Number(row.completion_tokens || 0),
+        totalTokens: Number(row.total_tokens || 0),
+        cachedTokens: Number(row.cached_tokens || 0),
+        reasoningTokens: Number(row.reasoning_tokens || 0),
+        usageIncomplete: Number(row.usage_incomplete || 0),
+        estimatedCost: Number(row.estimated_cost || 0),
+        currency: row.currency || 'USD',
+        meta: parseJsonField(row.meta_json, null)
+    };
+}
+
+function normalizeUsageStatisticsPriceRow(price = {}, fallbackTimestamp = null) {
+    if (!price || typeof price !== 'object') {
+        return null;
+    }
+
+    const model = typeof price.model === 'string' ? price.model.trim() : '';
+    if (!model) {
+        return null;
+    }
+
+    const promptPrice = Number(price.promptPricePer1k);
+    const completionPrice = Number(price.completionPricePer1k);
+
+    return {
+        model,
+        currency: typeof price.currency === 'string' && price.currency.trim() ? price.currency.trim().toUpperCase() : 'USD',
+        prompt_price_per_1k: Number.isFinite(promptPrice) ? promptPrice : 0,
+        completion_price_per_1k: Number.isFinite(completionPrice) ? completionPrice : 0,
+        updated_at: normalizeUsageStatisticsIso(price.updatedAt, fallbackTimestamp || nowIso()),
+        updated_by: typeof price.updatedBy === 'string' && price.updatedBy.trim() ? price.updatedBy.trim() : null
+    };
+}
+
 export class SqliteRuntimeStorage {
     constructor(config = {}) {
         this.config = config;
@@ -3829,6 +4078,513 @@ ON CONFLICT(scope, key) DO UPDATE SET
         return normalizedStore;
     }
 
+    async appendUsageStatisticsEvents(events = []) {
+        await this.initialize();
+
+        const fallbackTimestamp = nowIso();
+        const normalizedEvents = (Array.isArray(events) ? events : [])
+            .map((event, index) => normalizeUsageStatisticsEventRecord(event, index, fallbackTimestamp))
+            .filter(Boolean);
+
+        if (normalizedEvents.length === 0) {
+            return { insertedCount: 0 };
+        }
+
+        const statements = ['BEGIN IMMEDIATE;'];
+        appendInsertBatchStatements(statements, 'usage_stat_events', [
+            'id',
+            'occurred_at',
+            'created_at',
+            'request_path',
+            'endpoint_type',
+            'is_stream',
+            'from_provider',
+            'to_provider',
+            'provider_uuid',
+            'provider_custom_name',
+            'model',
+            'auth_type',
+            'auth_subject_hash',
+            'auth_subject_mask',
+            'request_status',
+            'status_code',
+            'error_code',
+            'error_message',
+            'latency_ms',
+            'prompt_tokens',
+            'completion_tokens',
+            'total_tokens',
+            'cached_tokens',
+            'reasoning_tokens',
+            'usage_incomplete',
+            'meta_json'
+        ], normalizedEvents, {
+            suffix: `
+ON CONFLICT(id) DO UPDATE SET
+    occurred_at = excluded.occurred_at,
+    created_at = excluded.created_at,
+    request_path = excluded.request_path,
+    endpoint_type = excluded.endpoint_type,
+    is_stream = excluded.is_stream,
+    from_provider = excluded.from_provider,
+    to_provider = excluded.to_provider,
+    provider_uuid = excluded.provider_uuid,
+    provider_custom_name = excluded.provider_custom_name,
+    model = excluded.model,
+    auth_type = excluded.auth_type,
+    auth_subject_hash = excluded.auth_subject_hash,
+    auth_subject_mask = excluded.auth_subject_mask,
+    request_status = excluded.request_status,
+    status_code = excluded.status_code,
+    error_code = excluded.error_code,
+    error_message = excluded.error_message,
+    latency_ms = excluded.latency_ms,
+    prompt_tokens = excluded.prompt_tokens,
+    completion_tokens = excluded.completion_tokens,
+    total_tokens = excluded.total_tokens,
+    cached_tokens = excluded.cached_tokens,
+    reasoning_tokens = excluded.reasoning_tokens,
+    usage_incomplete = excluded.usage_incomplete,
+    meta_json = excluded.meta_json`
+        });
+        statements.push('COMMIT;');
+
+        await this.client.exec(statements.join('\n'));
+        return {
+            insertedCount: normalizedEvents.length
+        };
+    }
+
+    async queryUsageStatisticsOverview(options = {}) {
+        await this.initialize();
+
+        const filters = normalizeUsageStatisticsFilters(options);
+        const whereClause = buildUsageStatisticsWhereClause(filters, 'e');
+
+        const totalRow = (await this.client.query(`
+SELECT
+    COUNT(*) AS total_requests,
+    SUM(CASE WHEN e.request_status = 'success' THEN 1 ELSE 0 END) AS success_requests,
+    SUM(CASE WHEN e.request_status <> 'success' THEN 1 ELSE 0 END) AS error_requests,
+    SUM(COALESCE(e.total_tokens, 0)) AS total_tokens,
+    SUM(COALESCE(e.prompt_tokens, 0)) AS prompt_tokens,
+    SUM(COALESCE(e.completion_tokens, 0)) AS completion_tokens,
+    SUM(COALESCE(e.cached_tokens, 0)) AS cached_tokens,
+    SUM(COALESCE(e.reasoning_tokens, 0)) AS reasoning_tokens,
+    AVG(COALESCE(e.latency_ms, 0)) AS avg_latency_ms,
+    SUM(CASE WHEN COALESCE(e.usage_incomplete, 0) = 1 THEN 1 ELSE 0 END) AS usage_incomplete_count
+FROM usage_stat_events e
+WHERE ${whereClause};
+        `))[0] || {};
+
+        const costRow = (await this.client.query(`
+SELECT
+    SUM(${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')}) AS total_cost,
+    SUM(CASE WHEN p.model IS NULL THEN 1 ELSE 0 END) AS unpriced_request_count
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause};
+        `))[0] || {};
+
+        const fromMs = new Date(filters.from).getTime();
+        const toMs = new Date(filters.to).getTime();
+        const windowMinutes = Math.max(1, Math.round((toMs - fromMs) / 60000));
+
+        const totalRequests = Number(totalRow.total_requests || 0);
+        const totalTokens = Number(totalRow.total_tokens || 0);
+        const errorRequests = Number(totalRow.error_requests || 0);
+
+        return {
+            from: filters.from,
+            to: filters.to,
+            windowMinutes,
+            totalRequests,
+            successRequests: Number(totalRow.success_requests || 0),
+            errorRequests,
+            errorRate: totalRequests > 0 ? errorRequests / totalRequests : 0,
+            totalTokens,
+            promptTokens: Number(totalRow.prompt_tokens || 0),
+            completionTokens: Number(totalRow.completion_tokens || 0),
+            cachedTokens: Number(totalRow.cached_tokens || 0),
+            reasoningTokens: Number(totalRow.reasoning_tokens || 0),
+            avgLatencyMs: Number(totalRow.avg_latency_ms || 0),
+            rpm: totalRequests / windowMinutes,
+            tpm: totalTokens / windowMinutes,
+            totalCost: Number(costRow.total_cost || 0),
+            unpricedRequestCount: Number(costRow.unpriced_request_count || 0),
+            usageIncompleteCount: Number(totalRow.usage_incomplete_count || 0)
+        };
+    }
+
+    async queryUsageStatisticsTrends(options = {}) {
+        await this.initialize();
+
+        const filters = normalizeUsageStatisticsFilters(options);
+        const bucket = normalizeUsageStatisticsBucket(filters.bucket);
+        const whereClause = buildUsageStatisticsWhereClause(filters, 'e');
+        const bucketSql = buildUsageStatisticsBucketSql(bucket, 'e.occurred_at');
+
+        const rows = await this.client.query(`
+SELECT
+    ${bucketSql} AS bucket_time,
+    COUNT(*) AS request_count,
+    SUM(CASE WHEN e.request_status = 'success' THEN 1 ELSE 0 END) AS success_count,
+    SUM(CASE WHEN e.request_status <> 'success' THEN 1 ELSE 0 END) AS error_count,
+    SUM(COALESCE(e.total_tokens, 0)) AS total_tokens,
+    SUM(COALESCE(e.prompt_tokens, 0)) AS prompt_tokens,
+    SUM(COALESCE(e.completion_tokens, 0)) AS completion_tokens,
+    SUM(${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')}) AS total_cost
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause}
+GROUP BY bucket_time
+ORDER BY bucket_time ASC;
+        `);
+
+        return {
+            from: filters.from,
+            to: filters.to,
+            bucket,
+            points: rows
+                .filter((row) => row.bucket_time)
+                .map((row) => ({
+                    bucketTime: row.bucket_time,
+                    requestCount: Number(row.request_count || 0),
+                    successCount: Number(row.success_count || 0),
+                    errorCount: Number(row.error_count || 0),
+                    totalTokens: Number(row.total_tokens || 0),
+                    promptTokens: Number(row.prompt_tokens || 0),
+                    completionTokens: Number(row.completion_tokens || 0),
+                    totalCost: Number(row.total_cost || 0)
+                }))
+        };
+    }
+
+    async queryUsageStatisticsHeatmap(options = {}) {
+        await this.initialize();
+
+        const filters = normalizeUsageStatisticsFilters(options);
+        const whereClause = buildUsageStatisticsWhereClause(filters, 'e');
+
+        const rows = await this.client.query(`
+SELECT
+    strftime('%Y-%m-%d', datetime(e.occurred_at, 'localtime')) AS date_key,
+    CAST(strftime('%H', datetime(e.occurred_at, 'localtime')) AS INTEGER) AS hour_of_day,
+    CASE
+        WHEN CAST(strftime('%M', datetime(e.occurred_at, 'localtime')) AS INTEGER) < 30 THEN 0
+        ELSE 30
+    END AS minute_of_hour,
+    COUNT(*) AS request_count,
+    SUM(CASE WHEN e.request_status <> 'success' THEN 1 ELSE 0 END) AS error_count,
+    SUM(COALESCE(e.total_tokens, 0)) AS total_tokens,
+    SUM(${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')}) AS total_cost,
+    GROUP_CONCAT(
+        CASE
+            WHEN e.request_status <> 'success' THEN COALESCE(NULLIF(TRIM(e.error_code), ''), NULLIF(TRIM(e.error_message), ''), 'error')
+            ELSE NULL
+        END,
+        ' | '
+    ) AS error_logs
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause}
+GROUP BY date_key, hour_of_day, minute_of_hour
+ORDER BY date_key ASC, hour_of_day ASC, minute_of_hour ASC;
+        `);
+
+        return {
+            from: filters.from,
+            to: filters.to,
+            cells: rows.map((row) => {
+                const dateKey = row.date_key || null;
+                const parsedDate = dateKey ? new Date(`${dateKey}T00:00:00`) : null;
+                const errorLogItems = typeof row.error_logs === 'string'
+                    ? [...new Set(
+                        row.error_logs
+                            .split('|')
+                            .map((item) => String(item || '').trim())
+                            .filter(Boolean)
+                    )].slice(0, 3)
+                    : [];
+                const logInfo = errorLogItems.join(' | ');
+                return {
+                    dateKey,
+                    weekday: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.getDay() : null,
+                    hour: Number(row.hour_of_day || 0),
+                    minute: Number(row.minute_of_hour || 0),
+                    requestCount: Number(row.request_count || 0),
+                    errorCount: Number(row.error_count || 0),
+                    totalTokens: Number(row.total_tokens || 0),
+                    totalCost: Number(row.total_cost || 0),
+                    logInfo: logInfo.length > 180 ? `${logInfo.slice(0, 177)}...` : logInfo
+                };
+            })
+        };
+    }
+
+    async queryUsageStatisticsDimensions(options = {}) {
+        await this.initialize();
+
+        const filters = normalizeUsageStatisticsFilters(options);
+        const whereClause = buildUsageStatisticsWhereClause(filters, 'e');
+        const limit = normalizeUsageStatisticsLimit(options.limit, 20, 200);
+        const dimension = normalizeUsageStatisticsDimension(options.dimension);
+
+        if (dimension === 'credentials') {
+            const rows = await this.client.query(`
+SELECT
+    COALESCE(NULLIF(TRIM(e.to_provider), ''), '(unknown)') AS to_provider,
+    COALESCE(NULLIF(TRIM(e.provider_uuid), ''), '(unknown)') AS provider_uuid,
+    MAX(NULLIF(TRIM(e.provider_custom_name), '')) AS provider_custom_name,
+    COUNT(*) AS request_count,
+    SUM(CASE WHEN e.request_status <> 'success' THEN 1 ELSE 0 END) AS error_count,
+    SUM(COALESCE(e.total_tokens, 0)) AS total_tokens,
+    SUM(${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')}) AS total_cost,
+    AVG(COALESCE(e.latency_ms, 0)) AS avg_latency_ms
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause}
+GROUP BY to_provider, provider_uuid
+ORDER BY request_count DESC, total_tokens DESC
+LIMIT ${limit};
+            `);
+
+            return {
+                from: filters.from,
+                to: filters.to,
+                dimension,
+                items: rows.map((row) => ({
+                    toProvider: row.to_provider,
+                    providerUuid: row.provider_uuid,
+                    providerCustomName: row.provider_custom_name || null,
+                    requestCount: Number(row.request_count || 0),
+                    errorCount: Number(row.error_count || 0),
+                    totalTokens: Number(row.total_tokens || 0),
+                    totalCost: Number(row.total_cost || 0),
+                    avgLatencyMs: Number(row.avg_latency_ms || 0)
+                }))
+            };
+        }
+
+        if (dimension === 'callers') {
+            const rows = await this.client.query(`
+SELECT
+    COALESCE(NULLIF(TRIM(e.auth_type), ''), '(unknown)') AS auth_type,
+    COALESCE(NULLIF(TRIM(e.auth_subject_hash), ''), '(unknown)') AS auth_subject_hash,
+    MAX(NULLIF(TRIM(e.auth_subject_mask), '')) AS auth_subject_mask,
+    COUNT(*) AS request_count,
+    SUM(CASE WHEN e.request_status <> 'success' THEN 1 ELSE 0 END) AS error_count,
+    SUM(COALESCE(e.total_tokens, 0)) AS total_tokens,
+    SUM(${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')}) AS total_cost,
+    AVG(COALESCE(e.latency_ms, 0)) AS avg_latency_ms
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause}
+GROUP BY auth_type, auth_subject_hash
+ORDER BY request_count DESC, total_tokens DESC
+LIMIT ${limit};
+            `);
+
+            return {
+                from: filters.from,
+                to: filters.to,
+                dimension,
+                items: rows.map((row) => ({
+                    authType: row.auth_type,
+                    authSubjectHash: row.auth_subject_hash,
+                    authSubjectMask: row.auth_subject_mask || null,
+                    requestCount: Number(row.request_count || 0),
+                    errorCount: Number(row.error_count || 0),
+                    totalTokens: Number(row.total_tokens || 0),
+                    totalCost: Number(row.total_cost || 0),
+                    avgLatencyMs: Number(row.avg_latency_ms || 0)
+                }))
+            };
+        }
+
+        const rows = await this.client.query(`
+SELECT
+    COALESCE(NULLIF(TRIM(e.model), ''), '(unknown)') AS event_model,
+    COUNT(*) AS request_count,
+    SUM(CASE WHEN e.request_status <> 'success' THEN 1 ELSE 0 END) AS error_count,
+    SUM(COALESCE(e.total_tokens, 0)) AS total_tokens,
+    SUM(COALESCE(e.prompt_tokens, 0)) AS prompt_tokens,
+    SUM(COALESCE(e.completion_tokens, 0)) AS completion_tokens,
+    SUM(${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')}) AS total_cost,
+    AVG(COALESCE(e.latency_ms, 0)) AS avg_latency_ms,
+    SUM(CASE WHEN p.model IS NULL THEN 1 ELSE 0 END) AS unpriced_request_count
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause}
+GROUP BY event_model
+ORDER BY request_count DESC, total_tokens DESC
+LIMIT ${limit};
+        `);
+
+        return {
+            from: filters.from,
+            to: filters.to,
+            dimension: 'models',
+            items: rows.map((row) => ({
+                model: row.event_model,
+                requestCount: Number(row.request_count || 0),
+                errorCount: Number(row.error_count || 0),
+                totalTokens: Number(row.total_tokens || 0),
+                promptTokens: Number(row.prompt_tokens || 0),
+                completionTokens: Number(row.completion_tokens || 0),
+                totalCost: Number(row.total_cost || 0),
+                avgLatencyMs: Number(row.avg_latency_ms || 0),
+                unpricedRequestCount: Number(row.unpriced_request_count || 0)
+            }))
+        };
+    }
+
+    async queryUsageStatisticsEvents(options = {}) {
+        await this.initialize();
+
+        const filters = normalizeUsageStatisticsFilters(options);
+        const whereClause = buildUsageStatisticsWhereClause(filters, 'e');
+        const limit = normalizeUsageStatisticsLimit(options.limit, filters.limit, 500);
+        const offset = normalizeUsageStatisticsOffset(options.offset, filters.offset);
+        const sort = normalizeUsageStatisticsSort(options.sort, filters.sort);
+
+        const totalRow = (await this.client.query(`
+SELECT COUNT(*) AS total_count
+FROM usage_stat_events e
+WHERE ${whereClause};
+        `))[0] || {};
+        const totalCount = Number(totalRow.total_count || 0);
+
+        const rows = await this.client.query(`
+SELECT
+    e.id,
+    e.occurred_at,
+    e.created_at,
+    e.request_path,
+    e.endpoint_type,
+    e.is_stream,
+    e.from_provider,
+    e.to_provider,
+    e.provider_uuid,
+    e.provider_custom_name,
+    e.model,
+    e.auth_type,
+    e.auth_subject_hash,
+    e.auth_subject_mask,
+    e.request_status,
+    e.status_code,
+    e.error_code,
+    e.error_message,
+    e.latency_ms,
+    e.prompt_tokens,
+    e.completion_tokens,
+    e.total_tokens,
+    e.cached_tokens,
+    e.reasoning_tokens,
+    e.usage_incomplete,
+    e.meta_json,
+    ${buildUsageStatisticsCostSql('e.prompt_tokens', 'e.completion_tokens', 'p')} AS estimated_cost,
+    COALESCE(p.currency, 'USD') AS currency
+FROM usage_stat_events e
+LEFT JOIN usage_stat_model_prices p
+    ON p.model = e.model
+WHERE ${whereClause}
+ORDER BY e.occurred_at ${sort.toUpperCase()}, e.id ${sort.toUpperCase()}
+LIMIT ${limit} OFFSET ${offset};
+        `);
+
+        return {
+            from: filters.from,
+            to: filters.to,
+            totalCount,
+            page: Math.floor(offset / Math.max(1, limit)) + 1,
+            limit,
+            totalPages: Math.max(1, Math.ceil(Math.max(totalCount, 1) / Math.max(1, limit))),
+            hasPrevPage: offset > 0,
+            hasNextPage: offset + limit < totalCount,
+            items: rows.map((row) => parseUsageStatisticsEventRow(row))
+        };
+    }
+
+    async listUsageStatisticsModelPrices() {
+        await this.initialize();
+
+        const rows = await this.client.query(`
+SELECT
+    model,
+    currency,
+    prompt_price_per_1k,
+    completion_price_per_1k,
+    updated_at,
+    updated_by
+FROM usage_stat_model_prices
+ORDER BY model ASC;
+        `);
+
+        return rows.map((row) => ({
+            model: row.model,
+            currency: row.currency || 'USD',
+            promptPricePer1k: Number(row.prompt_price_per_1k || 0),
+            completionPricePer1k: Number(row.completion_price_per_1k || 0),
+            updatedAt: normalizeIsoOrNull(row.updated_at) || row.updated_at || null,
+            updatedBy: row.updated_by || null
+        }));
+    }
+
+    async upsertUsageStatisticsModelPrices(prices = []) {
+        await this.initialize();
+
+        const fallbackTimestamp = nowIso();
+        const dedupeMap = new Map();
+        for (const price of Array.isArray(prices) ? prices : []) {
+            const normalized = normalizeUsageStatisticsPriceRow(price, fallbackTimestamp);
+            if (!normalized) {
+                continue;
+            }
+            dedupeMap.set(normalized.model, normalized);
+        }
+
+        const normalizedRows = Array.from(dedupeMap.values());
+        if (normalizedRows.length === 0) {
+            return {
+                updatedCount: 0,
+                prices: await this.listUsageStatisticsModelPrices()
+            };
+        }
+
+        const statements = ['BEGIN IMMEDIATE;'];
+        appendInsertBatchStatements(statements, 'usage_stat_model_prices', [
+            'model',
+            'currency',
+            'prompt_price_per_1k',
+            'completion_price_per_1k',
+            'updated_at',
+            'updated_by'
+        ], normalizedRows, {
+            suffix: `
+ON CONFLICT(model) DO UPDATE SET
+    currency = excluded.currency,
+    prompt_price_per_1k = excluded.prompt_price_per_1k,
+    completion_price_per_1k = excluded.completion_price_per_1k,
+    updated_at = excluded.updated_at,
+    updated_by = excluded.updated_by`
+        });
+        statements.push('COMMIT;');
+
+        await this.client.exec(statements.join('\n'));
+
+        return {
+            updatedCount: normalizedRows.length,
+            prices: await this.listUsageStatisticsModelPrices()
+        };
+    }
+
     async close() {
         return undefined;
     }
@@ -4183,6 +4939,56 @@ CREATE TABLE IF NOT EXISTS potluck_config (
     updated_at TEXT NOT NULL
 );
 
+
+CREATE TABLE IF NOT EXISTS usage_stat_events (
+    id TEXT PRIMARY KEY,
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    request_path TEXT,
+    endpoint_type TEXT,
+    is_stream INTEGER NOT NULL DEFAULT 0,
+    from_provider TEXT,
+    to_provider TEXT,
+    provider_uuid TEXT,
+    provider_custom_name TEXT,
+    model TEXT,
+    auth_type TEXT,
+    auth_subject_hash TEXT,
+    auth_subject_mask TEXT,
+    request_status TEXT NOT NULL,
+    status_code INTEGER,
+    error_code TEXT,
+    error_message TEXT,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_incomplete INTEGER NOT NULL DEFAULT 0,
+    meta_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_stat_events_time
+    ON usage_stat_events (occurred_at);
+CREATE INDEX IF NOT EXISTS idx_usage_stat_events_provider_time
+    ON usage_stat_events (to_provider, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_usage_stat_events_model_time
+    ON usage_stat_events (model, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_usage_stat_events_auth_time
+    ON usage_stat_events (auth_subject_hash, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_usage_stat_events_status_time
+    ON usage_stat_events (request_status, occurred_at);
+
+CREATE TABLE IF NOT EXISTS usage_stat_model_prices (
+    model TEXT PRIMARY KEY,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    prompt_price_per_1k REAL NOT NULL DEFAULT 0,
+    completion_price_per_1k REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS storage_migration_runs (
     id TEXT PRIMARY KEY,
     migration_type TEXT NOT NULL,
@@ -4420,6 +5226,84 @@ function buildSqliteOperationDetails(instance, operation, args = []) {
             replayBoundary: 'usage_refresh_task_interrupt_mark',
             idempotencyKey: 'usage_refresh_task_mark_interrupted_all'
         };
+    case 'appendUsageStatisticsEvents': {
+        const events = Array.isArray(args[0]) ? args[0] : [];
+        return {
+            eventCount: events.length,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_events_append',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_events_append', [String(events.length)])
+        };
+    }
+    case 'queryUsageStatisticsOverview': {
+        const options = normalizeUsageStatisticsFilters(args[0] || {});
+        return {
+            from: options.from,
+            to: options.to,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_overview_read',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_overview', [options.from, options.to])
+        };
+    }
+    case 'queryUsageStatisticsTrends': {
+        const options = normalizeUsageStatisticsFilters(args[0] || {});
+        return {
+            from: options.from,
+            to: options.to,
+            bucket: options.bucket,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_trends_read',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_trends', [options.from, options.to, options.bucket])
+        };
+    }
+    case 'queryUsageStatisticsHeatmap': {
+        const options = normalizeUsageStatisticsFilters(args[0] || {});
+        return {
+            from: options.from,
+            to: options.to,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_heatmap_read',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_heatmap', [options.from, options.to])
+        };
+    }
+    case 'queryUsageStatisticsDimensions': {
+        const options = normalizeUsageStatisticsFilters(args[0] || {});
+        return {
+            from: options.from,
+            to: options.to,
+            dimension: options.dimension,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_dimensions_read',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_dimensions', [options.from, options.to, options.dimension])
+        };
+    }
+    case 'queryUsageStatisticsEvents': {
+        const options = normalizeUsageStatisticsFilters(args[0] || {});
+        return {
+            from: options.from,
+            to: options.to,
+            limit: options.limit,
+            offset: options.offset,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_events_read',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_events', [options.from, options.to, String(options.limit), String(options.offset)])
+        };
+    }
+    case 'listUsageStatisticsModelPrices':
+        return {
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_model_prices_read',
+            idempotencyKey: 'usage_statistics_model_prices_read'
+        };
+    case 'upsertUsageStatisticsModelPrices': {
+        const prices = Array.isArray(args[0]) ? args[0] : [];
+        return {
+            priceCount: prices.length,
+            replaySafe: true,
+            replayBoundary: 'usage_statistics_model_prices_upsert',
+            idempotencyKey: buildSqliteStorageOperationKey('usage_statistics_model_prices_upsert', [String(prices.length)])
+        };
+    }
     case 'saveAdminSession':
         return {
             sessionKey: buildHashedTokenKey(args[0]),
@@ -4499,6 +5383,14 @@ const SQLITE_STORAGE_OPERATION_META = {
     saveUsageRefreshTask: { phase: 'write', domain: 'usage' },
     loadUsageRefreshTask: { phase: 'read', domain: 'usage' },
     markInterruptedUsageRefreshTasks: { phase: 'write', domain: 'usage' },
+    appendUsageStatisticsEvents: { phase: 'write', domain: 'usage_statistics' },
+    queryUsageStatisticsOverview: { phase: 'read', domain: 'usage_statistics' },
+    queryUsageStatisticsTrends: { phase: 'read', domain: 'usage_statistics' },
+    queryUsageStatisticsHeatmap: { phase: 'read', domain: 'usage_statistics' },
+    queryUsageStatisticsDimensions: { phase: 'read', domain: 'usage_statistics' },
+    queryUsageStatisticsEvents: { phase: 'read', domain: 'usage_statistics' },
+    listUsageStatisticsModelPrices: { phase: 'read', domain: 'usage_statistics' },
+    upsertUsageStatisticsModelPrices: { phase: 'write', domain: 'usage_statistics' },
     getAdminPasswordHash: { phase: 'read', domain: 'auth' },
     saveAdminPasswordHash: { phase: 'write', domain: 'auth' },
     getAdminSession: { phase: 'read', domain: 'session' },

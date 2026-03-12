@@ -1,6 +1,5 @@
 import os from 'os';
 import path from 'path';
-import AdmZip from 'adm-zip';
 import { promises as fs } from 'fs';
 import { jest } from '@jest/globals';
 
@@ -23,12 +22,10 @@ let handleDisableEnableProvider;
 let handleResetProviderHealth;
 let handleDeleteUnhealthyProviders;
 let handleRefreshUnhealthyUuids;
-let handleQuickLinkProvider;
 let handleRefreshProviderUuid;
 let handleBatchImportGrokTokens;
 let handleGetProviderType;
 let scanConfigFiles;
-let handleDownloadAllConfigs;
 let getProviderStatus;
 let initializeRuntimeStorage;
 let closeRuntimeStorage;
@@ -145,13 +142,11 @@ describe('Provider API runtime storage compatibility', () => {
         handleResetProviderHealth = providerApiModule.handleResetProviderHealth;
         handleDeleteUnhealthyProviders = providerApiModule.handleDeleteUnhealthyProviders;
         handleRefreshUnhealthyUuids = providerApiModule.handleRefreshUnhealthyUuids;
-        handleQuickLinkProvider = providerApiModule.handleQuickLinkProvider;
         handleRefreshProviderUuid = providerApiModule.handleRefreshProviderUuid;
         handleBatchImportGrokTokens = providerApiModule.handleBatchImportGrokTokens;
         handleGetProviderType = providerApiModule.handleGetProviderType;
 
         ({ scanConfigFiles } = await import('../src/ui-modules/config-scanner.js'));
-        ({ handleDownloadAllConfigs } = await import('../src/ui-modules/upload-config-api.js'));
         ({ getProviderStatus } = await import('../src/services/service-manager.js'));
         ({ ProviderPoolManager } = await import('../src/providers/provider-pool-manager.js'));
 
@@ -331,7 +326,7 @@ describe('Provider API runtime storage compatibility', () => {
         expect(listPayload.providers.map((item) => item.uuid)).toEqual(['grok-timeout']);
     });
 
-    test('should persist batch import and quick link through runtime storage in db mode', async () => {
+    test('should persist batch import through runtime storage in db mode', async () => {
         const { currentConfig } = await createDbConfig();
 
         mockGetRequestBody.mockResolvedValueOnce({
@@ -348,19 +343,8 @@ describe('Provider API runtime storage compatibility', () => {
         expect(batchImportPayload.successCount).toBe(2);
         expect(batchImportPayload.failedCount).toBe(1);
 
-        mockGetRequestBody.mockResolvedValueOnce({
-            filePaths: ['configs/gemini/account-1.json']
-        });
-
-        const quickLinkRes = createMockRes();
-        await handleQuickLinkProvider({}, quickLinkRes, currentConfig, null);
-        const quickLinkPayload = JSON.parse(quickLinkRes.body);
-        expect(quickLinkPayload.success).toBe(true);
-        expect(quickLinkPayload.successCount).toBe(1);
-
         const snapshot = await readRuntimeSnapshot();
         expect(snapshot['grok-custom']).toHaveLength(2);
-        expect(snapshot['gemini-cli-oauth'][0].GEMINI_OAUTH_CREDS_FILE_PATH).toContain('configs/gemini/account-1.json');
         expect(mockBroadcastEvent).toHaveBeenCalled();
     });
 
@@ -396,71 +380,7 @@ describe('Provider API runtime storage compatibility', () => {
         expect(scannedFile.usageInfo.usageDetails.some(item => item.providerType === 'gemini-cli-oauth')).toBe(true);
     });
 
-    test('should export provider_pools.json compatibility snapshot in download-all zip', async () => {
-        const { tempDir, currentConfig } = await createDbConfig({
-            'grok-custom': [
-                {
-                    uuid: 'grok-1',
-                    customName: 'Grok Zip',
-                    GROK_COOKIE_TOKEN: 'zip-token',
-                    isHealthy: true
-                }
-            ]
-        });
 
-        await fs.writeFile(path.join(tempDir, 'configs', 'config.json'), JSON.stringify({ ok: true }), 'utf8');
-        process.chdir(tempDir);
-
-        const res = createMockRes();
-        await handleDownloadAllConfigs({}, res, currentConfig);
-
-        expect(res.statusCode).toBe(200);
-        const zip = new AdmZip(res.body);
-        const providerPoolsEntry = zip.getEntry('provider_pools.json');
-        expect(providerPoolsEntry).toBeTruthy();
-        const providerPools = JSON.parse(providerPoolsEntry.getData().toString('utf8'));
-        expect(providerPools['grok-custom'][0]).toMatchObject({
-            uuid: 'grok-1',
-            customName: 'Grok Zip',
-            GROK_COOKIE_TOKEN: 'zip-token'
-        });
-    });
-
-    test('should fall back to in-memory provider pools when compat export is empty during zip download', async () => {
-        const tempDir = await createTempDir('provider-api-download-fallback-');
-        const configsDir = path.join(tempDir, 'configs');
-        await fs.mkdir(configsDir, { recursive: true });
-        await fs.writeFile(path.join(configsDir, 'config.json'), JSON.stringify({ ok: true }), 'utf8');
-        process.chdir(tempDir);
-
-        const currentConfig = {
-            LOG_OUTPUT_MODE: 'none',
-            providerPools: {
-                'grok-custom': [
-                    {
-                        uuid: 'grok-fallback-1',
-                        customName: 'Fallback Grok',
-                        GROK_COOKIE_TOKEN: 'fallback-token',
-                        isHealthy: true
-                    }
-                ]
-            }
-        };
-
-        const res = createMockRes();
-        await handleDownloadAllConfigs({}, res, currentConfig);
-
-        expect(res.statusCode).toBe(200);
-        const zip = new AdmZip(res.body);
-        const providerPoolsEntry = zip.getEntry('provider_pools.json');
-        expect(providerPoolsEntry).toBeTruthy();
-        const providerPools = JSON.parse(providerPoolsEntry.getData().toString('utf8'));
-        expect(providerPools['grok-custom'][0]).toMatchObject({
-            uuid: 'grok-fallback-1',
-            customName: 'Fallback Grok',
-            GROK_COOKIE_TOKEN: 'fallback-token'
-        });
-    });
 
     test('should reject missing provider payloads and invalid batch token input', async () => {
         const { currentConfig } = await createDbConfig();
@@ -662,7 +582,7 @@ describe('Provider API runtime storage compatibility', () => {
         expect(currentConfig.RUNTIME_STORAGE_INFO.lastFallback).toBeNull();
     });
 
-    test('should keep provider reads consistent across manager, compat snapshot, provider api and legacy export after partial update', async () => {
+    test('should keep provider reads consistent across manager, compat snapshot, and provider api after partial update', async () => {
         const { tempDir, currentConfig } = await createDbConfig({
             'grok-custom': [
                 {
@@ -730,22 +650,9 @@ describe('Provider API runtime storage compatibility', () => {
             GROK_COOKIE_TOKEN: 'secret-token'
         });
 
-        const downloadRes = createMockRes();
-        await handleDownloadAllConfigs({}, downloadRes, currentConfig);
-        const zip = new AdmZip(downloadRes.body);
-        const exportedProviderPools = JSON.parse(zip.getEntry('provider_pools.json').getData().toString('utf8'));
-        expect(exportedProviderPools['grok-custom'][0]).toMatchObject({
-            uuid: 'grok-1',
-            customName: 'Updated Grok',
-            checkModelName: 'grok-4',
-            GROK_BASE_URL: 'https://grok.com',
-            GROK_COOKIE_TOKEN: 'secret-token',
-            usageCount: 4,
-            errorCount: 1
-        });
     });
 
-    test('should validate provider mutation inputs and preserve dedupe rules in db mode', async () => {
+    test('should validate provider mutation inputs and preserve batch import dedupe rules in db mode', async () => {
         const { tempDir, currentConfig } = await createDbConfig({
             'grok-custom': [
                 {
@@ -756,10 +663,6 @@ describe('Provider API runtime storage compatibility', () => {
                 }
             ]
         });
-
-        await fs.mkdir(path.join(tempDir, 'configs', 'gemini'), { recursive: true });
-        await fs.writeFile(path.join(tempDir, 'configs', 'gemini', 'account-1.json'), JSON.stringify({ refresh_token: 'token-1' }), 'utf8');
-        process.chdir(tempDir);
 
         mockGetRequestBody.mockResolvedValueOnce({
             providerType: '../grok-custom',
@@ -824,23 +727,6 @@ describe('Provider API runtime storage compatibility', () => {
         expect(batchPayload.failedCount).toBe(2);
         expect(batchPayload.details.map(item => item.error).filter(Boolean)).toEqual(['duplicate_token', 'duplicate_token']);
 
-        mockGetRequestBody.mockResolvedValueOnce({
-            filePaths: ['configs/gemini/account-1.json']
-        });
-        const quickLinkFirstRes = createMockRes();
-        await handleQuickLinkProvider({}, quickLinkFirstRes, currentConfig, null);
-        expect(JSON.parse(quickLinkFirstRes.body).successCount).toBe(1);
-
-        mockGetRequestBody.mockResolvedValueOnce({
-            filePaths: ['configs/gemini/account-1.json']
-        });
-        const quickLinkSecondRes = createMockRes();
-        await handleQuickLinkProvider({}, quickLinkSecondRes, currentConfig, null);
-        const quickLinkSecondPayload = JSON.parse(quickLinkSecondRes.body);
-        expect(quickLinkSecondPayload.success).toBe(false);
-        expect(quickLinkSecondPayload.successCount).toBe(0);
-        expect(quickLinkSecondPayload.failCount).toBe(1);
-        expect(quickLinkSecondPayload.results[0].error).toBe('This config file is already linked');
     });
 
     test('should paginate provider type reads and reject batch imports above the configured limit', async () => {
