@@ -181,6 +181,85 @@ describe('Runtime storage foundation', () => {
         expect(await fs.stat(dbPath)).toBeTruthy();
     });
 
+    test('should apply partial provider mutations without rewriting the full snapshot', async () => {
+        const tempDir = await createTempDir('runtime-storage-partial-');
+        const dbPath = path.join(tempDir, 'runtime.sqlite');
+        const storage = createRuntimeStorage({
+            RUNTIME_STORAGE_BACKEND: 'db',
+            RUNTIME_STORAGE_DB_PATH: dbPath,
+            PROVIDER_POOLS_FILE_PATH: path.join(tempDir, 'provider_pools.json')
+        });
+
+        await storage.initialize();
+        await storage.replaceProviderPoolsSnapshot({
+            'grok-custom': [
+                {
+                    uuid: 'grok-1',
+                    customName: 'Original Grok',
+                    GROK_BASE_URL: 'https://grok.com',
+                    GROK_COOKIE_TOKEN: 'token-1',
+                    isHealthy: true,
+                    usageCount: 1
+                },
+                {
+                    uuid: 'grok-2',
+                    customName: 'Delete Me',
+                    GROK_BASE_URL: 'https://grok.com',
+                    GROK_COOKIE_TOKEN: 'token-2',
+                    isHealthy: false,
+                    errorCount: 2
+                }
+            ]
+        });
+
+        const initialSnapshot = await storage.exportProviderPoolsSnapshot();
+        const existingProvider = initialSnapshot['grok-custom'][0];
+        const providerToDelete = initialSnapshot['grok-custom'][1];
+        const updatedProvider = {
+            ...existingProvider,
+            customName: 'Updated Grok',
+            GROK_BASE_URL: 'https://api.grok.com',
+            usageCount: 9
+        };
+        Object.defineProperty(updatedProvider, '__providerId', {
+            value: existingProvider.__providerId,
+            enumerable: false,
+            configurable: true
+        });
+
+        await storage.upsertProviderPoolEntries([
+            {
+                providerType: 'grok-custom',
+                providerConfig: updatedProvider
+            }
+        ], {
+            sourceKind: 'partial_test'
+        });
+
+        await storage.updateProviderRoutingUuids([
+            {
+                providerId: existingProvider.__providerId,
+                newRoutingUuid: 'grok-1-new'
+            }
+        ]);
+
+        await storage.deleteProviderPoolEntries([
+            {
+                providerId: providerToDelete.__providerId
+            }
+        ]);
+
+        const exported = await storage.exportProviderPoolsSnapshot();
+        expect(exported['grok-custom']).toHaveLength(1);
+        expect(exported['grok-custom'][0]).toMatchObject({
+            uuid: 'grok-1-new',
+            customName: 'Updated Grok',
+            GROK_BASE_URL: 'https://api.grok.com',
+            GROK_COOKIE_TOKEN: 'token-1',
+            usageCount: 9
+        });
+    });
+
     test('should split file-backed credentials into inventory tables while preserving compat snapshot', async () => {
         const tempDir = await createTempDir('runtime-storage-credential-split-');
         const dbPath = path.join(tempDir, 'runtime.sqlite');

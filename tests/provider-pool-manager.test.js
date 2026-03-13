@@ -487,6 +487,62 @@ describe('ProviderPoolManager refresh recovery', () => {
         expect(manager._log).toHaveBeenCalledWith('error', expect.stringContaining('Failed to flush runtime state:'));
     });
 
+    test('should drop failed runtime flush retries after pending mutations are superseded', async () => {
+        const deferred = createDeferred();
+        const runtimeStorage = {
+            flushProviderRuntimeState: jest.fn(async () => {
+                await deferred.promise;
+                throw new Error('flush failed');
+            }),
+            updateProviderRoutingUuid: jest.fn(async () => ({ updated: false }))
+        };
+
+        const manager = new ProviderPoolManager({
+            'grok-custom': [
+                {
+                    uuid: 'grok-1',
+                    customName: 'Grok One',
+                    GROK_BASE_URL: 'https://grok.com',
+                    GROK_COOKIE_TOKEN: 'token-1',
+                    isHealthy: true,
+                    isDisabled: false,
+                    usageCount: 0,
+                    errorCount: 0
+                }
+            ]
+        }, {
+            globalConfig: {
+                LOG_LEVEL: 'error',
+                PERSIST_SELECTION_STATE: false
+            },
+            runtimeStorage,
+            saveDebounceTime: 60
+        });
+
+        manager._schedulePendingFlush = jest.fn();
+        manager._log = jest.fn();
+        manager._debouncedSave('grok-custom', 'grok-1');
+        manager._schedulePendingFlush.mockClear();
+
+        const flushPromise = manager._flushPendingSaves();
+        await Promise.resolve();
+
+        const discardResult = manager.discardPendingRuntimeMutations('provider_pools_snapshot_replace');
+        expect(discardResult.droppedSaveCount).toBe(0);
+        expect(discardResult.droppedRoutingCount).toBe(0);
+
+        deferred.resolve();
+        await expect(flushPromise).rejects.toThrow('flush failed');
+
+        expect(runtimeStorage.flushProviderRuntimeState).toHaveBeenCalledTimes(1);
+        expect(manager.pendingSaves.size).toBe(0);
+        expect(manager._schedulePendingFlush).not.toHaveBeenCalled();
+        expect(manager._log).toHaveBeenCalledWith(
+            'warn',
+            expect.stringContaining('Dropped failed runtime flush retry because provider snapshot already superseded this batch')
+        );
+    });
+
     test('should return idle summary when flush queue is empty', async () => {
         const runtimeStorage = {
             flushProviderRuntimeState: jest.fn(async () => ({ flushedCount: 0 })),

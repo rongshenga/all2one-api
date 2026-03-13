@@ -25,6 +25,25 @@ class ProviderStorageDomainFacade extends StorageDomainFacade {
         return await this.storage.replaceProviderPoolsSnapshot(providerPools, options);
     }
 
+    async upsertPoolEntries(entries = [], options = {}) {
+        if (typeof this.storage.upsertProviderPoolEntries !== 'function') {
+            return {
+                upsertedCount: 0,
+                providers: []
+            };
+        }
+        return await this.storage.upsertProviderPoolEntries(entries, options);
+    }
+
+    async deletePoolEntries(entries = [], options = {}) {
+        if (typeof this.storage.deleteProviderPoolEntries !== 'function') {
+            return {
+                deletedCount: 0
+            };
+        }
+        return await this.storage.deleteProviderPoolEntries(entries, options);
+    }
+
     async hasData() {
         return await this.storage.hasProviderData();
     }
@@ -68,6 +87,15 @@ class ProviderStorageDomainFacade extends StorageDomainFacade {
 
     async updateRoutingUuid(update = {}) {
         return await this.storage.updateProviderRoutingUuid(update);
+    }
+
+    async updateRoutingUuids(updates = []) {
+        if (typeof this.storage.updateProviderRoutingUuids !== 'function') {
+            return {
+                updatedCount: 0
+            };
+        }
+        return await this.storage.updateProviderRoutingUuids(updates);
     }
 }
 
@@ -340,6 +368,14 @@ export class RuntimeStorageFacade {
         return await this.provider.replacePoolsSnapshot(providerPools, options);
     }
 
+    async upsertProviderPoolEntries(entries = [], options = {}) {
+        return await this.provider.upsertPoolEntries(entries, options);
+    }
+
+    async deleteProviderPoolEntries(entries = [], options = {}) {
+        return await this.provider.deletePoolEntries(entries, options);
+    }
+
     async findCredentialAsset(providerType, match = {}) {
         return await this.provider.findCredentialAsset(providerType, match);
     }
@@ -370,6 +406,10 @@ export class RuntimeStorageFacade {
 
     async updateProviderRoutingUuid(update = {}) {
         return await this.provider.updateRoutingUuid(update);
+    }
+
+    async updateProviderRoutingUuids(updates = []) {
+        return await this.provider.updateRoutingUuids(updates);
     }
 
     async hasProviderData() {

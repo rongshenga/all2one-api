@@ -173,6 +173,11 @@ describe('Provider API runtime storage compatibility', () => {
 
     test('should persist provider CRUD and single UUID refresh through runtime storage in db mode', async () => {
         const { currentConfig } = await createDbConfig();
+        const managedState = getRuntimeStorage().__getManagedState();
+        const upsertSpy = jest.spyOn(managedState.activeStorage, 'upsertProviderPoolEntries');
+        const deleteSpy = jest.spyOn(managedState.activeStorage, 'deleteProviderPoolEntries');
+        const routingSpy = jest.spyOn(managedState.activeStorage, 'updateProviderRoutingUuids');
+        const replaceSpy = jest.spyOn(managedState.activeStorage, 'replaceProviderPoolsSnapshot');
 
         mockGetRequestBody.mockResolvedValueOnce({
             providerType: 'grok-custom',
@@ -223,6 +228,10 @@ describe('Provider API runtime storage compatibility', () => {
         const snapshot = await readRuntimeSnapshot();
         expect(snapshot['grok-custom']).toBeUndefined();
         await expect(fs.access(currentConfig.PROVIDER_POOLS_FILE_PATH)).rejects.toThrow();
+        expect(upsertSpy).toHaveBeenCalled();
+        expect(deleteSpy).toHaveBeenCalled();
+        expect(routingSpy).toHaveBeenCalled();
+        expect(replaceSpy).not.toHaveBeenCalled();
     });
 
     test('should persist unhealthy mutations and reset health through runtime storage in db mode', async () => {
@@ -247,6 +256,11 @@ describe('Provider API runtime storage compatibility', () => {
                 }
             ]
         });
+        const managedState = getRuntimeStorage().__getManagedState();
+        const flushSpy = jest.spyOn(managedState.activeStorage, 'flushProviderRuntimeState');
+        const routingSpy = jest.spyOn(managedState.activeStorage, 'updateProviderRoutingUuids');
+        const deleteSpy = jest.spyOn(managedState.activeStorage, 'deleteProviderPoolEntries');
+        const replaceSpy = jest.spyOn(managedState.activeStorage, 'replaceProviderPoolsSnapshot');
 
         const refreshRes = createMockRes();
         await handleRefreshUnhealthyUuids({}, refreshRes, currentConfig, null, 'grok-custom');
@@ -269,6 +283,59 @@ describe('Provider API runtime storage compatibility', () => {
         const deleteUnhealthyRes = createMockRes();
         await handleDeleteUnhealthyProviders({}, deleteUnhealthyRes, currentConfig, null, 'grok-custom');
         expect(JSON.parse(deleteUnhealthyRes.body).deletedCount).toBe(0);
+        expect(routingSpy).toHaveBeenCalled();
+        expect(flushSpy).toHaveBeenCalled();
+        expect(deleteSpy).not.toHaveBeenCalled();
+        expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
+    test('should refresh unhealthy uuids through partial routing updates without snapshot replace', async () => {
+        const { currentConfig } = await createDbConfig({
+            'grok-custom': [
+                {
+                    uuid: 'grok-healthy',
+                    customName: 'Healthy',
+                    GROK_COOKIE_TOKEN: 'healthy-token',
+                    isHealthy: true,
+                    errorCount: 0
+                },
+                {
+                    uuid: 'grok-unhealthy',
+                    customName: 'Unhealthy',
+                    GROK_COOKIE_TOKEN: 'bad-token',
+                    isHealthy: false,
+                    errorCount: 3
+                }
+            ]
+        });
+
+        const providerPoolManager = new ProviderPoolManager(currentConfig.providerPools, {
+            globalConfig: currentConfig,
+            runtimeStorage: getRuntimeStorage(),
+            saveDebounceTime: 20
+        });
+        providerPoolManager.discardPendingRuntimeMutations = jest.fn(() => ({
+            droppedSaveCount: 0,
+            droppedRoutingCount: 0,
+            epoch: 1
+        }));
+        const managedState = getRuntimeStorage().__getManagedState();
+        const routingSpy = jest.spyOn(managedState.activeStorage, 'updateProviderRoutingUuids');
+        const replaceSpy = jest.spyOn(managedState.activeStorage, 'replaceProviderPoolsSnapshot');
+
+        const refreshRes = createMockRes();
+        await handleRefreshUnhealthyUuids({}, refreshRes, currentConfig, providerPoolManager, 'grok-custom');
+
+        expect(refreshRes.statusCode).toBe(200);
+        expect(routingSpy).toHaveBeenCalledWith([
+            expect.objectContaining({
+                providerId: expect.any(String),
+                providerType: 'grok-custom',
+                oldRoutingUuid: 'grok-unhealthy'
+            })
+        ]);
+        expect(providerPoolManager.discardPendingRuntimeMutations).not.toHaveBeenCalled();
+        expect(replaceSpy).not.toHaveBeenCalled();
     });
 
     test('should delete only matching unhealthy providers by errorType and keep others', async () => {
@@ -476,9 +543,9 @@ describe('Provider API runtime storage compatibility', () => {
         currentConfig.RUNTIME_STORAGE_FALLBACK_TO_FILE = false;
 
         const managedState = getRuntimeStorage().__getManagedState();
-        const originalReplace = managedState.activeStorage.replaceProviderPoolsSnapshot;
+        const originalUpsert = managedState.activeStorage.upsertProviderPoolEntries;
         const snapshotBefore = await readRuntimeSnapshot();
-        managedState.activeStorage.replaceProviderPoolsSnapshot = jest.fn(async () => {
+        managedState.activeStorage.upsertProviderPoolEntries = jest.fn(async () => {
             throw new Error('persist failed');
         });
 
@@ -498,7 +565,7 @@ describe('Provider API runtime storage compatibility', () => {
         expect(mockBroadcastEvent).not.toHaveBeenCalled();
         expect(await readRuntimeSnapshot()).toEqual(snapshotBefore);
 
-        managedState.activeStorage.replaceProviderPoolsSnapshot = originalReplace;
+        managedState.activeStorage.upsertProviderPoolEntries = originalUpsert;
     });
 
     test('should return traceable diagnostics when provider mutation fails without fallback', async () => {
@@ -506,7 +573,7 @@ describe('Provider API runtime storage compatibility', () => {
         currentConfig.RUNTIME_STORAGE_FALLBACK_TO_FILE = false;
 
         const managedState = getRuntimeStorage().__getManagedState();
-        managedState.activeStorage.replaceProviderPoolsSnapshot = jest.fn(async () => {
+        managedState.activeStorage.upsertProviderPoolEntries = jest.fn(async () => {
             const error = new Error('database is locked');
             error.code = 'SQLITE_BUSY';
             throw error;
@@ -550,7 +617,7 @@ describe('Provider API runtime storage compatibility', () => {
         const { currentConfig } = await createDbConfig();
 
         const managedState = getRuntimeStorage().__getManagedState();
-        managedState.activeStorage.replaceProviderPoolsSnapshot = jest.fn(async () => {
+        managedState.activeStorage.upsertProviderPoolEntries = jest.fn(async () => {
             const error = new Error('database is locked');
             error.code = 'SQLITE_BUSY';
             throw error;
@@ -776,8 +843,8 @@ describe('Provider API runtime storage compatibility', () => {
 
         const snapshotBefore = await readRuntimeSnapshot();
         const managedState = getRuntimeStorage().__getManagedState();
-        const originalReplace = managedState.activeStorage.storage.replaceProviderPoolsSnapshot;
-        managedState.activeStorage.storage.replaceProviderPoolsSnapshot = jest.fn(async () => {
+        const originalUpsert = managedState.activeStorage.upsertProviderPoolEntries;
+        managedState.activeStorage.upsertProviderPoolEntries = jest.fn(async () => {
             throw new Error('batch persist failed');
         });
 
@@ -794,11 +861,11 @@ describe('Provider API runtime storage compatibility', () => {
 
         expect(res.statusCode).toBe(500);
         expect(JSON.parse(res.body).error).toBe('batch persist failed');
-        expect(managedState.activeStorage.storage.replaceProviderPoolsSnapshot).toHaveBeenCalled();
+        expect(managedState.activeStorage.upsertProviderPoolEntries).toHaveBeenCalled();
         expect(await readRuntimeSnapshot()).toEqual(snapshotBefore);
         expect(mockBroadcastEvent).not.toHaveBeenCalled();
 
-        managedState.activeStorage.storage.replaceProviderPoolsSnapshot = originalReplace;
+        managedState.activeStorage.upsertProviderPoolEntries = originalUpsert;
     });
 
     test('should ignore dual-write config and keep runtime storage in db mode', async () => {

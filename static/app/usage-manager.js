@@ -14,6 +14,7 @@ const PROVIDERS_WITHOUT_USAGE_DISPLAY = [
 
 // 提供商配置缓存
 let currentProviderConfigs = null;
+let currentProviderSummaries = new Map();
 // 正在刷新中的提供商，避免重复触发
 const refreshingProviders = new Set();
 const usageProviderDetailsPromises = new Map();
@@ -111,13 +112,16 @@ function getUsageProviderSummary(providerType, providerData = {}) {
     const limit = Number(providerData.limit ?? DEFAULT_USAGE_PROVIDER_DETAILS_PAGE_SIZE);
     const totalPages = Number(providerData.totalPages ?? Math.max(1, Math.ceil(Math.max(availableCount, 1) / Math.max(1, limit))));
     const page = Math.min(Math.max(1, Number(providerData.page ?? 1)), totalPages);
+    const processedCount = Number(providerData.processedCount ?? instances.length ?? 0);
+    const taskState = usageProviderRefreshStates.get(providerType) || null;
+    const authoritativeTotalCount = resolveUsageProviderTotalCount(providerType, providerData, taskState);
     return {
         providerType,
         timestamp: providerData.timestamp || null,
-        totalCount: Number(providerData.totalCount ?? instances.length ?? 0),
+        totalCount: authoritativeTotalCount,
         successCount: Number(providerData.successCount ?? instances.filter(instance => instance.success).length ?? 0),
         errorCount: Number(providerData.errorCount ?? Math.max(0, instances.length - instances.filter(instance => instance.success).length) ?? 0),
-        processedCount: Number(providerData.processedCount ?? instances.length ?? 0),
+        processedCount,
         availableCount,
         page,
         limit,
@@ -127,6 +131,29 @@ function getUsageProviderSummary(providerType, providerData = {}) {
         instances,
         detailsLoaded: providerData.detailsLoaded === true || instances.length > 0
     };
+}
+
+function resolveUsageProviderTotalCount(providerType, providerData = {}, taskState = null) {
+    const instances = Array.isArray(providerData.instances) ? providerData.instances : [];
+    const taskScope = taskState?.scope || null;
+    if (taskScope === 'provider_all') {
+        const taskTotalCount = Number(taskState?.resultTotalCount || taskState?.totalInstances || 0);
+        if (Number.isFinite(taskTotalCount) && taskTotalCount > 0) {
+            return taskTotalCount;
+        }
+    }
+
+    const summaryTotalCount = Number(currentProviderSummaries.get(providerType)?.totalCount ?? NaN);
+    if (Number.isFinite(summaryTotalCount) && summaryTotalCount >= 0) {
+        return summaryTotalCount;
+    }
+
+    const providerTotalCount = Number(providerData.totalCount ?? NaN);
+    if (Number.isFinite(providerTotalCount) && providerTotalCount >= 0) {
+        return providerTotalCount;
+    }
+
+    return Math.max(0, instances.length);
 }
 
 function clearRenderedChildren(element) {
@@ -166,8 +193,52 @@ function createUsageProviderRefreshState(providerType, taskStatus = {}, override
         remainingGroups: totalGroups > 0 ? Math.max(totalGroups - currentGroup, 0) : 0,
         totalInstances,
         processedInstances,
+        resultTotalCount: Number(taskStatus?.result?.totalCount || 0),
         percent
     };
+}
+
+function updateUsageGroupHeaderSummary(targetGroup, providerSummary) {
+    const header = findChildByClass(targetGroup, 'usage-group-header') || targetGroup?.children?.[0];
+    if (!header || !providerSummary) {
+        return;
+    }
+
+    const instanceCount = Number(providerSummary.totalCount || 0);
+    const successCount = Number(providerSummary.successCount || 0);
+    const instanceCountEl = header.querySelector?.('.instance-count') || null;
+    if (instanceCountEl) {
+        instanceCountEl.textContent = t('usage.group.instances', { count: instanceCount });
+        instanceCountEl.setAttribute?.('data-i18n', 'usage.group.instances');
+        instanceCountEl.setAttribute?.('data-i18n-params', JSON.stringify({ count: String(instanceCount) }));
+    }
+
+    const successCountEl = header.querySelector?.('.success-count') || null;
+    if (successCountEl) {
+        successCountEl.textContent = t('usage.group.success', { count: successCount, total: instanceCount });
+        successCountEl.setAttribute?.('data-i18n', 'usage.group.success');
+        successCountEl.setAttribute?.('data-i18n-params', JSON.stringify({
+            count: String(successCount),
+            total: String(instanceCount)
+        }));
+        successCountEl.classList?.toggle?.('all-success', successCount === instanceCount);
+    }
+}
+
+function syncRenderedUsageProviderSummary(providerType, groupContainer = null) {
+    const targetGroup = groupContainer || findUsageProviderGroup(providerType);
+    if (!targetGroup) {
+        return null;
+    }
+
+    const currentSummary = targetGroup.__usageProviderData || { providerType };
+    const nextSummary = getUsageProviderSummary(providerType, currentSummary);
+    targetGroup.__usageProviderData = {
+        ...currentSummary,
+        ...nextSummary
+    };
+    updateUsageGroupHeaderSummary(targetGroup, targetGroup.__usageProviderData);
+    return targetGroup.__usageProviderData;
 }
 
 function buildUsageGroupTaskMeta(taskState) {
@@ -341,6 +412,7 @@ function setUsageProviderRefreshState(providerType, taskStatus = {}, overrides =
     const nextState = createUsageProviderRefreshState(providerType, taskStatus, overrides);
     usageProviderRefreshStates.set(providerType, nextState);
     updateUsageProviderRefreshIndicator(providerType);
+    syncRenderedUsageProviderSummary(providerType);
     return nextState;
 }
 
@@ -351,6 +423,7 @@ function clearUsageProviderRefreshState(providerType, groupContainer = null) {
 
     usageProviderRefreshStates.delete(providerType);
     updateUsageProviderRefreshIndicator(providerType, groupContainer);
+    syncRenderedUsageProviderSummary(providerType, groupContainer);
 }
 
 function ensureBackgroundUsageRefreshPolling(providerType, taskPayload, fallbackProviderName, options = {}) {
@@ -1024,6 +1097,17 @@ export function updateUsageProviderConfigs(configs) {
     logUsageUiDebug('provider configs updated while usage section inactive, deferred usage reload');
 }
 
+export function updateUsageProviderSummaries(providerSummaries = {}) {
+    currentProviderSummaries = new Map(Object.entries(providerSummaries || {}));
+    if (!isUsageSectionActive()) {
+        return;
+    }
+
+    for (const providerType of currentProviderSummaries.keys()) {
+        syncRenderedUsageProviderSummary(providerType);
+    }
+}
+
 /**
  * 检查提供商是否支持显示用量
  * @param {string} providerType - 提供商类型
@@ -1290,7 +1374,8 @@ export async function refreshProviderUsage(providerType, options = {}) {
         const providerName = getProviderDisplayName(providerType);
         const previousGroup = findUsageProviderGroup(providerType);
         const shouldRestoreExpandedDetails = Boolean(previousGroup && !previousGroup.classList.contains('collapsed'));
-        const providerSummary = previousGroup?.__usageProviderData || getUsageProviderSummary(providerType, {});
+        const providerSummary = syncRenderedUsageProviderSummary(providerType, previousGroup)
+            || getUsageProviderSummary(providerType, previousGroup?.__usageProviderData || {});
         const providerTotalCount = Number(providerSummary.totalCount || 0);
         const refreshScope = await resolveProviderRefreshScope(providerType, providerSummary, options);
         if (!refreshScope) {

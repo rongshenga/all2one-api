@@ -162,7 +162,8 @@ async function importProviderManagerModule() {
         updateTutorialProviderConfigs: jest.fn()
     }));
     jest.doMock('../static/app/usage-manager.js', () => ({
-        updateUsageProviderConfigs: jest.fn()
+        updateUsageProviderConfigs: jest.fn(),
+        updateUsageProviderSummaries: jest.fn()
     }));
     jest.doMock('../static/app/config-manager.js', () => ({
         updateConfigProviderConfigs: jest.fn()
@@ -407,6 +408,42 @@ describe('Runtime storage dashboard diagnostics UI', () => {
         expect(container.elements['#runtimeStorageAlert'].hidden).toBe(false);
         expect(container.dataset.loading).toBe('true');
         expect(container.dataset.readOnly).toBe('true');
+    });
+
+    test('should summarize multiline runtime storage errors in diagnostics panel', async () => {
+        const {
+            buildRuntimeStorageDiagnosticsViewModel,
+            renderRuntimeStorageDiagnostics
+        } = await importProviderManagerModule();
+        const container = createDiagnosticsContainer();
+        const multilineMessage = [
+            'Runtime error near line 3: FOREIGN KEY constraint failed (19)',
+            'Runtime error near line 50: FOREIGN KEY constraint failed (19)',
+            'Runtime error near line 97: FOREIGN KEY constraint failed (19)'
+        ].join('\n');
+        const viewModel = buildRuntimeStorageDiagnosticsViewModel({
+            runtimeStorage: {
+                backend: 'db',
+                authoritativeSource: 'database',
+                lastError: {
+                    error: {
+                        message: multilineMessage
+                    }
+                }
+            },
+            providerSummary: {
+                providerTypeCount: 1,
+                providerCount: 2
+            }
+        }, {
+            hasAdminAccess: true
+        });
+
+        renderRuntimeStorageDiagnostics(viewModel, container);
+
+        expect(container.elements['#runtimeStorageError'].textContent).toBe('FOREIGN KEY constraint failed (19) (+2 more)');
+        expect(container.elements['#runtimeStorageError'].title).toBe(multilineMessage);
+        expect(container.elements['#runtimeStorageAlert'].textContent).toBe('最近一次运行时存储错误：FOREIGN KEY constraint failed (19) (+2 more)');
     });
 
     test('should execute reload/export/rollback actions and refresh dependent stores', async () => {

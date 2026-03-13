@@ -1,31 +1,58 @@
+# Node.js
 node_modules
 npm-debug.log
+
+# Git
 .git
 .gitignore
+
+# Docker
 Dockerfile
 .dockerignore
+docker/
+
+# IDE & Editor
 .claude
 .ace-tool
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
 *.DS_Store
 .DS_Store
 **/.DS_Store
+
+# Test & Coverage
 .nyc_output
 coverage
-.nyc_output
 .coverage
-.env
-.env.local
-.env.*.local
-credentials.json
-*.md
-LICENSE
-jest.config.js
-babel.config.js
 tests/
 run-tests.js
 test-summary.js
+jest.config.js
+babel.config.js
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Credentials
+credentials.json
+
+# Documentation
+*.md
+LICENSE
+
+# Logs (will be mounted as volume)
 logs/
-docker/configs/
-configs/runtime/migrations/
-configs/runtime/*.sqlite-wal
-configs/runtime/*.sqlite-shm
+
+# Configs (will be mounted as volume)
+configs/
+
+# Build artifacts
+dist/
+build/
+

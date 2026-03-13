@@ -1,19 +1,31 @@
 services:
   all2one-api:
-    # 方式一：使用 Docker Hub 预构建镜像（默认，推荐）
-    # 使用方法: docker compose up -d
-    image: justlikemaki/all2one-api:latest
+    # 本地构建镜像
+    # 使用方法: cd docker && docker compose up -d --build
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.org}
+        HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
+        NO_PROXY: ${DOCKER_NO_PROXY:-localhost,127.0.0.1}
     container_name: all2one-api
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "8085-8087:8085-8087" 
+      - "8085-8087:8085-8087"
       - "1455:1455"
       - "19876-19880:19876-19880"
     volumes:
-      - ./configs:/app/configs
+      # 挂载本地配置目录，直接使用本地数据
+      - ../configs:/app/configs
+      # 挂载日志目录（可选）
+      - ../logs:/app/logs
     environment:
-      - ARGS=
+      - ARGS=${ARGS:-}
+      - NODE_ENV=production
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s

@@ -1,7 +1,8 @@
 services:
   all2one-api:
-    # 方式二：从 Dockerfile 本地构建
-    # 使用方法: docker compose -f docker-compose.build.yml up -d --build
+    # 本地构建镜像（开发模式）
+    # 使用方法: cd docker && docker compose -f docker-compose.build.yml up -d --build
+    # 此配置用于开发调试，会挂载源代码目录实现热更新
     build:
       context: ..
       dockerfile: Dockerfile
@@ -11,17 +12,23 @@ services:
         HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
         HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
         NO_PROXY: ${DOCKER_NO_PROXY:-localhost,127.0.0.1}
-    container_name: all2one-api
+    container_name: all2one-api-dev
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "8085-8087:8085-8087" 
+      - "8085-8087:8085-8087"
       - "1455:1455"
       - "19876-19880:19876-19880"
     volumes:
-      - ./configs:/app/configs
+      # 挂载本地配置目录，直接使用本地数据
+      - ../configs:/app/configs
+      # 挂载日志目录
+      - ../logs:/app/logs
+      # 开发模式：挂载源代码（可选，用于调试）
+      # - ../src:/app/src
     environment:
-      - ARGS=
+      - ARGS=${ARGS:-}
+      - NODE_ENV=development
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s

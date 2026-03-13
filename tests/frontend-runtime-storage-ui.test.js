@@ -278,6 +278,7 @@ describe('frontend event stream and usage manager', () => {
         jest.doMock('../static/app/utils.js', () => ({
             escapeHtml: (value) => String(value),
             showToast,
+            showConfirmDialog: jest.fn(async () => true),
             getProviderConfigs: () => ([
                 { id: 'grok-custom', name: 'Grok Reverse' },
                 { id: 'openai-codex-oauth', name: 'Codex OAuth' }
@@ -412,6 +413,191 @@ describe('frontend event stream and usage manager', () => {
 
         expect(usageContent.children).toHaveLength(1);
         expect(usageContent.children[0].dataset.providerType).toBe('gemini-cli-oauth');
+        global.document.createElement = originalCreateElement;
+    });
+
+    test('should prefer authoritative provider summary totals over stale usage cache totals during render', async () => {
+        const originalCreateElement = global.document.createElement;
+        global.document.createElement = jest.fn(() => createTreeElement());
+
+        usageManagerModule.updateUsageProviderSummaries({
+            'openai-codex-oauth': {
+                totalCount: 85984
+            }
+        });
+
+        global.fetch = jest.fn(async (url) => {
+            fetchCalls.push(String(url));
+            if (String(url) === '/api/usage') {
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => ({
+                        providers: {
+                            'openai-codex-oauth': {
+                                totalCount: 87428,
+                                successCount: 1,
+                                errorCount: 87427,
+                                processedCount: 87428,
+                                instances: []
+                            }
+                        },
+                        timestamp: '2026-03-13T12:27:07.000Z',
+                        serverTime: '2026-03-13T12:27:08.000Z'
+                    })
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+
+        await usageManagerModule.loadUsage();
+
+        const group = usageContent.children[0];
+        expect(group.dataset.providerType).toBe('openai-codex-oauth');
+        expect(group.__usageProviderData.totalCount).toBe(85984);
+        expect(group.children[0].innerHTML).toContain('85984');
+
+        global.document.createElement = originalCreateElement;
+    });
+
+    test('should sync rendered provider totals when provider summaries update after usage render', async () => {
+        const originalCreateElement = global.document.createElement;
+        global.document.createElement = jest.fn(() => createTreeElement());
+        usageSection.classList.add('active');
+
+        global.fetch = jest.fn(async (url) => {
+            fetchCalls.push(String(url));
+            if (String(url) === '/api/usage') {
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => ({
+                        providers: {
+                            'openai-codex-oauth': {
+                                totalCount: 87428,
+                                successCount: 1,
+                                errorCount: 87427,
+                                processedCount: 87428,
+                                instances: []
+                            }
+                        },
+                        timestamp: '2026-03-13T12:27:07.000Z',
+                        serverTime: '2026-03-13T12:27:08.000Z'
+                    })
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+
+        await usageManagerModule.loadUsage();
+
+        const group = usageContent.children[0];
+        expect(group.__usageProviderData.totalCount).toBe(87428);
+
+        usageManagerModule.updateUsageProviderSummaries({
+            'openai-codex-oauth': {
+                totalCount: 85984
+            }
+        });
+
+        expect(group.__usageProviderData.totalCount).toBe(85984);
+
+        global.document.createElement = originalCreateElement;
+    });
+
+    test('should use authoritative provider summary totals for provider_all confirmation when rendered group is stale', async () => {
+        const originalCreateElement = global.document.createElement;
+        global.document.createElement = jest.fn(() => createTreeElement());
+        usageSection.classList.add('active');
+
+        let usageFetchCount = 0;
+        global.fetch = jest.fn(async (url) => {
+            fetchCalls.push(String(url));
+            if (String(url) === '/api/usage') {
+                usageFetchCount += 1;
+                const totalCount = usageFetchCount === 1 ? 2500 : 1500;
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => ({
+                        providers: {
+                            'openai-codex-oauth': {
+                                totalCount,
+                                successCount: totalCount,
+                                errorCount: 0,
+                                processedCount: totalCount,
+                                instances: []
+                            }
+                        },
+                        timestamp: `2026-03-13T12:27:0${usageFetchCount}.000Z`,
+                        serverTime: '2026-03-13T12:27:08.000Z'
+                    })
+                };
+            }
+
+            if (String(url) === '/api/usage/openai-codex-oauth?refresh=true&async=true&scope=provider_all') {
+                return {
+                    ok: true,
+                    status: 202,
+                    statusText: 'Accepted',
+                    json: async () => ({
+                        taskId: 'provider-task-confirm-1',
+                        pollIntervalMs: 1
+                    })
+                };
+            }
+
+            if (String(url) === '/api/usage/tasks/provider-task-confirm-1') {
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    json: async () => ({
+                        status: 'completed',
+                        providerType: 'openai-codex-oauth',
+                        scope: 'provider_all',
+                        result: {
+                            totalCount: 1500,
+                            summary: {
+                                normalCount: 1500,
+                                quotaExhaustedCount: 0,
+                                exceptionCount: 0
+                            }
+                        }
+                    })
+                };
+            }
+
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+
+        await usageManagerModule.loadUsage();
+
+        const group = usageContent.children[0];
+        expect(group.__usageProviderData.totalCount).toBe(2500);
+
+        usageSection.classList.remove('active');
+        usageManagerModule.updateUsageProviderSummaries({
+            'openai-codex-oauth': {
+                totalCount: 1500
+            }
+        });
+        expect(group.__usageProviderData.totalCount).toBe(2500);
+
+        usageSection.classList.add('active');
+        const utilsModule = await import('../static/app/utils.js');
+        utilsModule.showConfirmDialog.mockClear();
+
+        await usageManagerModule.refreshProviderUsage('openai-codex-oauth', { scope: 'provider_all' });
+
+        expect(utilsModule.showConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
+            message: 'Codex OAuth:1500:3000'
+        }));
+        expect(fetchCalls).toContain('/api/usage/openai-codex-oauth?refresh=true&async=true&scope=provider_all');
+
         global.document.createElement = originalCreateElement;
     });
 
@@ -940,7 +1126,8 @@ describe('frontend runtime storage diagnostics panel', () => {
             updateTutorialProviderConfigs: jest.fn()
         }));
         jest.doMock('../static/app/usage-manager.js', () => ({
-            updateUsageProviderConfigs: jest.fn()
+            updateUsageProviderConfigs: jest.fn(),
+            updateUsageProviderSummaries: jest.fn()
         }));
         jest.doMock('../static/app/config-manager.js', () => ({
             updateConfigProviderConfigs: jest.fn()
@@ -1035,6 +1222,38 @@ describe('frontend runtime storage diagnostics panel', () => {
         expect(nodes['#runtimeStorageReloadBtn']['aria-disabled']).toBe('true');
         expect(container.dataset.loading).toBe('true');
         expect(container.dataset.readOnly).toBe('false');
+    });
+
+    test('should summarize repeated multiline runtime storage errors for dashboard diagnostics', () => {
+        const { container, nodes } = createDiagnosticsContainer();
+        const multilineMessage = [
+            'Runtime error near line 3: FOREIGN KEY constraint failed (19)',
+            'Runtime error near line 50: FOREIGN KEY constraint failed (19)',
+            'Runtime error near line 97: FOREIGN KEY constraint failed (19)'
+        ].join('\n');
+        const viewModel = providerManagerModule.buildRuntimeStorageDiagnosticsViewModel({
+            runtimeStorage: {
+                backend: 'db',
+                authoritativeSource: 'database',
+                lastError: {
+                    error: {
+                        message: multilineMessage
+                    }
+                }
+            },
+            providerSummary: {
+                providerTypeCount: 3,
+                providerCount: 8
+            }
+        }, {
+            hasAdminAccess: true
+        });
+
+        providerManagerModule.renderRuntimeStorageDiagnostics(viewModel, container);
+
+        expect(nodes['#runtimeStorageError'].textContent).toBe('FOREIGN KEY constraint failed (19) (+2 more)');
+        expect(nodes['#runtimeStorageError'].title).toBe(multilineMessage);
+        expect(nodes['#runtimeStorageAlert'].textContent).toBe('最近一次运行时存储错误：FOREIGN KEY constraint failed (19) (+2 more)');
     });
 
     test('should execute reload export and rollback actions with loading toggles and refresh callbacks', async () => {

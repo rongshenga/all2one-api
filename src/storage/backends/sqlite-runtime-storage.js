@@ -585,6 +585,80 @@ async function prepareProviderPoolsSnapshotImport(providerPools = {}, options = 
     };
 }
 
+async function prepareProviderEntryMutations(entries = [], options = {}) {
+    const sourceKind = options.sourceKind || 'ui_api_partial';
+    const timestamp = options.timestamp || nowIso();
+    const prepareConcurrency = resolvePrepareConcurrency(options.prepareConcurrency);
+    const seenProviderIds = new Map();
+    const normalizedEntries = [];
+    const credentialRequests = new Map();
+
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+        const entry = entries[entryIndex] || {};
+        const providerType = typeof entry.providerType === 'string' ? entry.providerType.trim() : '';
+        const providerConfig = entry?.providerConfig && typeof entry.providerConfig === 'object' && !Array.isArray(entry.providerConfig)
+            ? entry.providerConfig
+            : (entry?.provider && typeof entry.provider === 'object' && !Array.isArray(entry.provider) ? entry.provider : null);
+
+        if (!providerType || !providerConfig) {
+            continue;
+        }
+
+        const normalized = splitProviderConfig(providerType, providerConfig);
+        const identityEntry = buildProviderIdentityConflictEntry(providerType, entryIndex, normalized);
+        assertUniqueProviderIdentity(seenProviderIds, identityEntry, sourceKind);
+
+        const credentialCacheKeys = [];
+        for (const credentialReference of normalized.credentialReferences || []) {
+            const cacheKey = buildCredentialReferenceCacheKey(providerType, credentialReference.filePath);
+            if (!cacheKey) {
+                continue;
+            }
+
+            credentialCacheKeys.push(cacheKey);
+            if (!credentialRequests.has(cacheKey)) {
+                credentialRequests.set(cacheKey, {
+                    cacheKey,
+                    providerType,
+                    filePath: credentialReference.filePath
+                });
+            }
+        }
+
+        normalizedEntries.push({
+            providerType,
+            providerConfig,
+            normalized,
+            credentialCacheKeys
+        });
+    }
+
+    const credentialRequestList = Array.from(credentialRequests.values());
+    const credentialResults = await mapWithConcurrency(
+        credentialRequestList,
+        prepareConcurrency,
+        async (request) => await readCredentialAssetRecord(
+            request.providerType,
+            request.filePath,
+            sourceKind,
+            timestamp
+        )
+    );
+
+    const assetRecordByCacheKey = new Map();
+    for (let index = 0; index < credentialRequestList.length; index += 1) {
+        assetRecordByCacheKey.set(credentialRequestList[index].cacheKey, credentialResults[index] || null);
+    }
+
+    return {
+        sourceKind,
+        timestamp,
+        prepareConcurrency,
+        normalizedEntries,
+        assetRecordByCacheKey
+    };
+}
+
 function pushProviderStatements(statements, normalizedProvider, sourceKind, timestamp) {
     const registration = normalizedProvider.registration;
     const runtimeState = normalizedProvider.runtimeState;
@@ -649,6 +723,120 @@ INSERT INTO provider_runtime_state (
     ${sqlValue(runtimeState.lastSelectionSeq)},
     ${sqlValue(timestamp)}
 );
+    `);
+
+    for (const secret of normalizedProvider.inlineSecrets) {
+        statements.push(`
+INSERT INTO provider_inline_secrets (
+    provider_id,
+    secret_kind,
+    secret_payload,
+    protection_mode,
+    updated_at
+) VALUES (
+    ${sqlValue(secret.providerId)},
+    ${sqlValue(secret.secretKind)},
+    ${sqlValue(secret.secretPayload)},
+    ${sqlValue(secret.protectionMode)},
+    ${sqlValue(timestamp)}
+);
+        `);
+    }
+}
+
+function pushProviderUpsertStatements(statements, normalizedProvider, sourceKind, timestamp) {
+    const registration = normalizedProvider.registration;
+    const runtimeState = normalizedProvider.runtimeState;
+
+    statements.push(`
+INSERT INTO provider_registrations (
+    provider_id,
+    provider_type,
+    routing_uuid,
+    display_name,
+    check_model,
+    project_id,
+    base_url,
+    config_json,
+    source_kind,
+    created_at,
+    updated_at
+) VALUES (
+    ${sqlValue(registration.providerId)},
+    ${sqlValue(registration.providerType)},
+    ${sqlValue(registration.routingUuid)},
+    ${sqlValue(registration.displayName)},
+    ${sqlValue(registration.checkModel)},
+    ${sqlValue(registration.projectId)},
+    ${sqlValue(registration.baseUrl)},
+    ${sqlValue(registration.configJson)},
+    ${sqlValue(sourceKind)},
+    ${sqlValue(timestamp)},
+    ${sqlValue(timestamp)}
+)
+ON CONFLICT(provider_id) DO UPDATE SET
+    provider_type = excluded.provider_type,
+    routing_uuid = excluded.routing_uuid,
+    display_name = excluded.display_name,
+    check_model = excluded.check_model,
+    project_id = excluded.project_id,
+    base_url = excluded.base_url,
+    config_json = excluded.config_json,
+    source_kind = excluded.source_kind,
+    updated_at = excluded.updated_at;
+    `);
+
+    statements.push(`
+INSERT INTO provider_runtime_state (
+    provider_id,
+    is_healthy,
+    is_disabled,
+    usage_count,
+    error_count,
+    last_used_at,
+    last_health_check_at,
+    last_health_check_model,
+    last_error_time,
+    last_error_message,
+    scheduled_recovery_at,
+    refresh_count,
+    last_selection_seq,
+    updated_at
+) VALUES (
+    ${sqlValue(runtimeState.providerId)},
+    ${sqlValue(runtimeState.isHealthy)},
+    ${sqlValue(runtimeState.isDisabled)},
+    ${sqlValue(runtimeState.usageCount)},
+    ${sqlValue(runtimeState.errorCount)},
+    ${sqlValue(runtimeState.lastUsed)},
+    ${sqlValue(runtimeState.lastHealthCheckTime)},
+    ${sqlValue(runtimeState.lastHealthCheckModel)},
+    ${sqlValue(runtimeState.lastErrorTime)},
+    ${sqlValue(runtimeState.lastErrorMessage)},
+    ${sqlValue(runtimeState.scheduledRecoveryTime)},
+    ${sqlValue(runtimeState.refreshCount)},
+    ${sqlValue(runtimeState.lastSelectionSeq)},
+    ${sqlValue(timestamp)}
+)
+ON CONFLICT(provider_id) DO UPDATE SET
+    is_healthy = excluded.is_healthy,
+    is_disabled = excluded.is_disabled,
+    usage_count = excluded.usage_count,
+    error_count = excluded.error_count,
+    last_used_at = excluded.last_used_at,
+    last_health_check_at = excluded.last_health_check_at,
+    last_health_check_model = excluded.last_health_check_model,
+    last_error_time = excluded.last_error_time,
+    last_error_message = excluded.last_error_message,
+    scheduled_recovery_at = excluded.scheduled_recovery_at,
+    refresh_count = excluded.refresh_count,
+    last_selection_seq = excluded.last_selection_seq,
+    updated_at = excluded.updated_at;
+    `);
+
+    statements.push(`
+DELETE FROM provider_inline_secrets
+WHERE provider_id = ${sqlValue(registration.providerId)};
     `);
 
     for (const secret of normalizedProvider.inlineSecrets) {
@@ -803,6 +991,28 @@ ON CONFLICT(id) DO UPDATE SET
     binding_status = excluded.binding_status,
     updated_at = excluded.updated_at;
     `);
+}
+
+function pushProviderBindingResetStatements(statements, providerId, timestamp) {
+    statements.push(`
+UPDATE credential_bindings
+SET binding_status = 'inactive',
+    updated_at = ${sqlValue(timestamp)}
+WHERE binding_type = 'provider_registration'
+  AND binding_target_id = ${sqlValue(providerId)};
+    `);
+}
+
+function buildProviderMutationWhereClause(entry = {}) {
+    if (entry?.providerId) {
+        return `provider_id = ${sqlValue(entry.providerId)}`;
+    }
+
+    if (entry?.providerType && entry?.routingUuid) {
+        return `provider_type = ${sqlValue(entry.providerType)} AND routing_uuid = ${sqlValue(entry.routingUuid)}`;
+    }
+
+    return null;
 }
 
 function parseJsonField(value, fallback = null) {
@@ -2335,6 +2545,111 @@ ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value, updated_at
         return await this.exportProviderPoolsSnapshot();
     }
 
+    async upsertProviderPoolEntries(entries = [], options = {}) {
+        await this.initialize();
+
+        const preparedMutations = await prepareProviderEntryMutations(entries, options);
+        const { normalizedEntries, assetRecordByCacheKey, sourceKind, timestamp } = preparedMutations;
+
+        if (normalizedEntries.length === 0) {
+            return {
+                upsertedCount: 0,
+                providers: []
+            };
+        }
+
+        const statements = ['BEGIN IMMEDIATE;'];
+        for (const entry of normalizedEntries) {
+            pushProviderUpsertStatements(statements, entry.normalized, sourceKind, timestamp);
+
+            let activeCredentialAssetId = null;
+            for (const cacheKey of entry.credentialCacheKeys) {
+                const assetRecord = assetRecordByCacheKey.get(cacheKey);
+                if (!assetRecord?.asset?.id) {
+                    continue;
+                }
+
+                pushCredentialAssetStatements(statements, assetRecord, timestamp);
+                activeCredentialAssetId = assetRecord.asset.id;
+            }
+
+            if (activeCredentialAssetId) {
+                pushCredentialBindingStatements(
+                    statements,
+                    entry.normalized.providerId,
+                    activeCredentialAssetId,
+                    timestamp
+                );
+            } else {
+                pushProviderBindingResetStatements(statements, entry.normalized.providerId, timestamp);
+            }
+        }
+
+        statements.push('COMMIT;');
+        await this.client.exec(statements.join('\n'), {
+            operation: 'upsertProviderPoolEntries'
+        });
+
+        return {
+            upsertedCount: normalizedEntries.length,
+            providers: normalizedEntries.map((entry) => ({
+                providerType: entry.providerType,
+                providerId: entry.normalized.providerId,
+                routingUuid: entry.normalized.registration?.routingUuid || null
+            }))
+        };
+    }
+
+    async deleteProviderPoolEntries(entries = [], options = {}) {
+        await this.initialize();
+
+        const normalizedEntries = Array.isArray(entries)
+            ? entries
+                .map((entry) => ({
+                    whereClause: buildProviderMutationWhereClause(entry),
+                    providerId: entry?.providerId || null,
+                    providerType: entry?.providerType || null,
+                    routingUuid: entry?.routingUuid || null
+                }))
+                .filter((entry) => entry.whereClause)
+            : [];
+
+        if (normalizedEntries.length === 0) {
+            return {
+                deletedCount: 0
+            };
+        }
+
+        const timestamp = nowIso();
+        const statements = ['BEGIN IMMEDIATE;'];
+        for (const entry of normalizedEntries) {
+            statements.push(`
+UPDATE credential_bindings
+SET binding_status = 'inactive',
+    updated_at = ${sqlValue(timestamp)}
+WHERE binding_type = 'provider_registration'
+  AND binding_target_id IN (
+      SELECT provider_id
+      FROM provider_registrations
+      WHERE ${entry.whereClause}
+  );
+            `);
+            statements.push(`
+DELETE FROM provider_registrations
+WHERE ${entry.whereClause};
+            `);
+        }
+        statements.push('COMMIT;');
+
+        await this.client.exec(statements.join('\n'), {
+            operation: 'deleteProviderPoolEntries'
+        });
+
+        return {
+            deletedCount: normalizedEntries.length
+        };
+    }
+
     async findCredentialAsset(providerType, match = {}) {
         await this.initialize();
 
@@ -2764,6 +3079,44 @@ COMMIT;
         `);
 
         return { updated: true };
+    }
+
+    async updateProviderRoutingUuids(updates = []) {
+        await this.initialize();
+
+        const normalizedUpdates = Array.isArray(updates)
+            ? updates.filter((update) => update?.newRoutingUuid && (update?.providerId || (update?.providerType && update?.oldRoutingUuid)))
+            : [];
+
+        if (normalizedUpdates.length === 0) {
+            return {
+                updatedCount: 0
+            };
+        }
+
+        const timestamp = nowIso();
+        const statements = ['BEGIN IMMEDIATE;'];
+        for (const update of normalizedUpdates) {
+            const whereClause = update.providerId
+                ? `provider_id = ${sqlValue(update.providerId)}`
+                : `provider_type = ${sqlValue(update.providerType)} AND routing_uuid = ${sqlValue(update.oldRoutingUuid)}`;
+
+            statements.push(`
+UPDATE provider_registrations
+SET routing_uuid = ${sqlValue(update.newRoutingUuid)},
+    updated_at = ${sqlValue(timestamp)}
+WHERE ${whereClause};
+            `);
+        }
+        statements.push('COMMIT;');
+
+        await this.client.exec(statements.join('\n'), {
+            operation: 'updateProviderRoutingUuids'
+        });
+
+        return {
+            updatedCount: normalizedUpdates.length
+        };
     }
 
 
@@ -5103,6 +5456,36 @@ function buildSqliteOperationDetails(instance, operation, args = []) {
             idempotencyKey: 'provider_snapshot_replace_full'
         };
     }
+    case 'upsertProviderPoolEntries': {
+        const entries = Array.isArray(args[0]) ? args[0] : [];
+        const options = args[1] || {};
+        const providerIds = entries
+            .map((entry) => entry?.providerConfig?.__providerId || entry?.providerId || null)
+            .filter(Boolean)
+            .sort();
+        return {
+            providerId: providerIds[0] || null,
+            providerCount: entries.length,
+            sourceKind: options.sourceKind || null,
+            replaySafe: true,
+            replayBoundary: 'provider_row_upsert',
+            idempotencyKey: buildSqliteStorageOperationKey('provider_row_upsert', providerIds)
+        };
+    }
+    case 'deleteProviderPoolEntries': {
+        const entries = Array.isArray(args[0]) ? args[0] : [];
+        const providerKeys = entries
+            .map((entry) => entry?.providerId || `${entry?.providerType || 'unknown'}:${entry?.routingUuid || 'unknown'}`)
+            .filter(Boolean)
+            .sort();
+        return {
+            providerId: providerKeys[0] || null,
+            providerCount: entries.length,
+            replaySafe: true,
+            replayBoundary: 'provider_row_delete',
+            idempotencyKey: buildSqliteStorageOperationKey('provider_row_delete', providerKeys)
+        };
+    }
     case 'findCredentialAsset': {
         const match = args[1] || {};
         return {
@@ -5186,6 +5569,21 @@ function buildSqliteOperationDetails(instance, operation, args = []) {
                 update.providerId || `${update.providerType || 'unknown'}:${update.oldRoutingUuid || 'unknown'}`,
                 update.newRoutingUuid || 'missing'
             ])
+        };
+    }
+    case 'updateProviderRoutingUuids': {
+        const updates = Array.isArray(args[0]) ? args[0] : [];
+        const providerKeys = updates
+            .map((update) => update?.providerId || `${update?.providerType || 'unknown'}:${update?.oldRoutingUuid || 'unknown'}->${update?.newRoutingUuid || 'missing'}`)
+            .filter(Boolean)
+            .sort();
+        return {
+            providerId: providerKeys[0] || null,
+            providerCount: updates.length,
+            replaySafe: true,
+            replayBoundary: 'provider_registration_routing_uuid_batch',
+            idempotencyKey: buildSqliteStorageOperationKey('provider_routing_uuid_batch', providerKeys),
+            lockRetryWindowMs
         };
     }
     case 'loadUsageCacheSummary':
@@ -5367,6 +5765,8 @@ const SQLITE_STORAGE_OPERATION_META = {
     loadProviderTypePage: { phase: 'read', domain: 'provider' },
     exportProviderPoolsSnapshot: { phase: 'export', domain: 'provider' },
     replaceProviderPoolsSnapshot: { phase: 'write', domain: 'provider' },
+    upsertProviderPoolEntries: { phase: 'write', domain: 'provider' },
+    deleteProviderPoolEntries: { phase: 'write', domain: 'provider' },
     findCredentialAsset: { phase: 'read', domain: 'provider' },
     listCredentialAssets: { phase: 'read', domain: 'provider' },
     getCredentialSecretBlob: { phase: 'read', domain: 'provider' },
@@ -5375,6 +5775,7 @@ const SQLITE_STORAGE_OPERATION_META = {
     linkCredentialFiles: { phase: 'write', domain: 'provider' },
     flushProviderRuntimeState: { phase: 'flush', domain: 'provider' },
     updateProviderRoutingUuid: { phase: 'flush', domain: 'provider' },
+    updateProviderRoutingUuids: { phase: 'flush', domain: 'provider' },
     loadUsageCacheSnapshot: { phase: 'read', domain: 'usage' },
     loadUsageCacheSummary: { phase: 'read', domain: 'usage' },
     replaceUsageCacheSnapshot: { phase: 'write', domain: 'usage' },

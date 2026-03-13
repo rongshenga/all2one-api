@@ -54,6 +54,67 @@ describe('SqliteRuntimeStorage DAO SQL', () => {
         expect(sql.trim().endsWith('COMMIT;')).toBe(true);
     });
 
+    test('should build provider entry upsert SQL with row-level upsert semantics', async () => {
+        const providerConfig = {
+            uuid: 'grok-1',
+            customName: "O'Reilly",
+            GROK_COOKIE_TOKEN: "tok'en",
+            GROK_BASE_URL: 'https://grok.com',
+            isHealthy: false,
+            errorCount: 3
+        };
+        Object.defineProperty(providerConfig, '__providerId', {
+            value: 'prov_grok_1',
+            enumerable: false,
+            configurable: true
+        });
+
+        await expect(storage.upsertProviderPoolEntries([
+            {
+                providerType: 'grok-custom',
+                providerConfig
+            }
+        ], {
+            sourceKind: 'dao_partial'
+        })).resolves.toEqual({
+            upsertedCount: 1,
+            providers: [
+                {
+                    providerType: 'grok-custom',
+                    providerId: 'prov_grok_1',
+                    routingUuid: 'grok-1'
+                }
+            ]
+        });
+
+        const sql = mockClient.exec.mock.calls[0][0];
+        expect(sql).toContain('INSERT INTO provider_registrations');
+        expect(sql).toContain('ON CONFLICT(provider_id) DO UPDATE SET');
+        expect(sql).toContain('INSERT INTO provider_runtime_state');
+        expect(sql).toContain('DELETE FROM provider_inline_secrets');
+        expect(sql).toContain('UPDATE credential_bindings');
+        expect(sql).toContain("O''Reilly");
+        expect(sql).toContain("tok''en");
+        expect(sql.trim().endsWith('COMMIT;')).toBe(true);
+    });
+
+    test('should build provider delete SQL that deactivates bindings before deleting registrations', async () => {
+        await expect(storage.deleteProviderPoolEntries([
+            {
+                providerId: 'prov_grok_1'
+            }
+        ])).resolves.toEqual({
+            deletedCount: 1
+        });
+
+        const sql = mockClient.exec.mock.calls[0][0];
+        expect(sql).toContain('UPDATE credential_bindings');
+        expect(sql).toContain("binding_target_id IN");
+        expect(sql).toContain("'prov_grok_1'");
+        expect(sql).toContain('DELETE FROM provider_registrations');
+        expect(sql.trim().endsWith('COMMIT;')).toBe(true);
+    });
+
     test('should persist runtime flush SQL without selection sequence when disabled', async () => {
         const record = {
             providerId: 'prov_grok_1',
@@ -94,6 +155,30 @@ describe('SqliteRuntimeStorage DAO SQL', () => {
 
         const sql = mockClient.exec.mock.calls[0][0];
         expect(sql).toContain('987654');
+    });
+
+    test('should batch provider routing uuid updates into one transactional exec call', async () => {
+        await expect(storage.updateProviderRoutingUuids([
+            {
+                providerId: 'prov_grok_1',
+                newRoutingUuid: 'grok-2'
+            },
+            {
+                providerType: 'grok-custom',
+                oldRoutingUuid: 'grok-old',
+                newRoutingUuid: 'grok-new'
+            }
+        ])).resolves.toEqual({
+            updatedCount: 2
+        });
+
+        const sql = mockClient.exec.mock.calls[0][0];
+        expect(sql).toContain('BEGIN IMMEDIATE;');
+        expect(sql).toContain("provider_id = 'prov_grok_1'");
+        expect(sql).toContain("routing_uuid = 'grok-2'");
+        expect(sql).toContain("provider_type = 'grok-custom' AND routing_uuid = 'grok-old'");
+        expect(sql).toContain("routing_uuid = 'grok-new'");
+        expect(sql.trim().endsWith('COMMIT;')).toBe(true);
     });
 
 

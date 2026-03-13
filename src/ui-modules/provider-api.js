@@ -11,14 +11,54 @@ import {
     replaceProviderPoolsCompatSnapshot
 } from '../storage/runtime-storage-registry.js';
 import { serializeRuntimeStorageError } from '../storage/runtime-storage-error.js';
+import { splitProviderConfig } from '../storage/provider-storage-mapper.js';
 
-function cloneProviderPools(providerPools = {}) {
-    try {
-        return JSON.parse(JSON.stringify(providerPools || {}));
-    } catch (error) {
-        logger.warn('[UI API] Failed to clone provider pools snapshot:', error.message);
+function annotateProviderConfigId(providerConfig, providerId) {
+    if (!providerConfig || typeof providerConfig !== 'object' || !providerId) {
+        return providerConfig;
+    }
+
+    Object.defineProperty(providerConfig, '__providerId', {
+        value: providerId,
+        enumerable: false,
+        configurable: true,
+        writable: true
+    });
+
+    return providerConfig;
+}
+
+function cloneProviderConfig(providerConfig = {}) {
+    if (!providerConfig || typeof providerConfig !== 'object' || Array.isArray(providerConfig)) {
         return {};
     }
+
+    let clonedConfig;
+    try {
+        clonedConfig = JSON.parse(JSON.stringify(providerConfig));
+    } catch (error) {
+        logger.warn('[UI API] Failed to clone provider config:', error.message);
+        clonedConfig = { ...providerConfig };
+    }
+
+    if (providerConfig.__providerId) {
+        annotateProviderConfigId(clonedConfig, providerConfig.__providerId);
+    }
+
+    return clonedConfig;
+}
+
+function cloneProviderPools(providerPools = {}) {
+    const clonedPools = {};
+
+    for (const [providerType, providers] of Object.entries(providerPools || {})) {
+        if (!Array.isArray(providers)) {
+            continue;
+        }
+        clonedPools[providerType] = providers.map((provider) => cloneProviderConfig(provider));
+    }
+
+    return clonedPools;
 }
 
 async function loadProviderPools(currentConfig, providerPoolManager) {
@@ -94,18 +134,137 @@ async function persistProviderPools(currentConfig, providerPoolManager, provider
         sourceKind: options.sourceKind || 'ui_api'
     });
 
+    if (providerPoolManager && typeof providerPoolManager.discardPendingRuntimeMutations === 'function') {
+        providerPoolManager.discardPendingRuntimeMutations('provider_pools_snapshot_replace');
+    }
+
+    syncProviderPoolsState(currentConfig, providerPoolManager, normalizedSnapshot, options);
+
+    return normalizedSnapshot;
+}
+
+function syncProviderPoolsState(currentConfig, providerPoolManager, providerPools, options = {}) {
     if (currentConfig) {
-        currentConfig.providerPools = normalizedSnapshot;
+        currentConfig.providerPools = providerPools;
     }
 
     if (providerPoolManager) {
-        providerPoolManager.providerPools = options.managerProviderPools || normalizedSnapshot;
+        providerPoolManager.providerPools = options.managerProviderPools || providerPools;
         if (options.reinitializeManager !== false) {
             providerPoolManager.initializeProviderStatus();
         }
     }
 
-    return normalizedSnapshot;
+    return providerPools;
+}
+
+function buildProviderPoolsFromManagerStatus(providerPoolManager) {
+    const providerPools = {};
+
+    for (const [providerType, providers] of Object.entries(providerPoolManager?.providerStatus || {})) {
+        providerPools[providerType] = Array.isArray(providers)
+            ? providers.map((providerStatus) => cloneProviderConfig(providerStatus?.config))
+            : [];
+    }
+
+    return providerPools;
+}
+
+function getProviderMutationStorage(currentConfig = {}) {
+    const runtimeBackend = currentConfig?.RUNTIME_STORAGE_INFO?.backend;
+    if (runtimeBackend !== 'db' && runtimeBackend !== 'dual-write') {
+        return null;
+    }
+
+    return getRuntimeStorage();
+}
+
+function buildProviderRuntimeRecord(providerType, providerConfig) {
+    const normalized = splitProviderConfig(providerType, providerConfig);
+    return {
+        providerId: normalized.providerId,
+        providerType,
+        runtimeState: normalized.runtimeState
+    };
+}
+
+function annotateUpsertedProviderEntries(entries = [], result = {}) {
+    const providers = Array.isArray(result?.providers) ? result.providers : [];
+    for (let index = 0; index < providers.length; index += 1) {
+        const providerId = providers[index]?.providerId;
+        const providerConfig = entries[index]?.providerConfig || entries[index]?.provider;
+        if (providerId && providerConfig) {
+            annotateProviderConfigId(providerConfig, providerId);
+        }
+    }
+}
+
+async function persistProviderEntryMutations(currentConfig, providerPoolManager, providerPools, entries, options = {}) {
+    const runtimeStorage = getProviderMutationStorage(currentConfig);
+    if (!runtimeStorage || typeof runtimeStorage.upsertProviderPoolEntries !== 'function') {
+        return await persistProviderPools(currentConfig, providerPoolManager, providerPools, options);
+    }
+
+    const result = await runtimeStorage.upsertProviderPoolEntries(entries, {
+        sourceKind: options.sourceKind || 'ui_api_partial'
+    });
+    annotateUpsertedProviderEntries(entries, result);
+    syncProviderPoolsState(currentConfig, providerPoolManager, providerPools, options);
+    return result;
+}
+
+async function persistProviderDeletionMutations(currentConfig, providerPoolManager, providerPools, entries, options = {}) {
+    const runtimeStorage = getProviderMutationStorage(currentConfig);
+    if (!runtimeStorage || typeof runtimeStorage.deleteProviderPoolEntries !== 'function') {
+        return await persistProviderPools(currentConfig, providerPoolManager, providerPools, options);
+    }
+
+    const result = await runtimeStorage.deleteProviderPoolEntries(entries, {
+        sourceKind: options.sourceKind || 'ui_api_partial'
+    });
+    syncProviderPoolsState(currentConfig, providerPoolManager, providerPools, options);
+    return result;
+}
+
+async function persistProviderRuntimeStateMutations(currentConfig, providerPoolManager, providerPools, providerType, providers, options = {}) {
+    const runtimeStorage = getProviderMutationStorage(currentConfig);
+    if (!runtimeStorage || typeof runtimeStorage.flushProviderRuntimeState !== 'function') {
+        return await persistProviderPools(currentConfig, providerPoolManager, providerPools, options);
+    }
+
+    const records = (Array.isArray(providers) ? providers : [])
+        .map((providerConfig) => buildProviderRuntimeRecord(providerType, providerConfig));
+    const result = await runtimeStorage.flushProviderRuntimeState(records, {
+        persistSelectionState: providerPoolManager?.persistSelectionState === true,
+        flushReason: options.flushReason || 'ui_api_partial'
+    });
+    syncProviderPoolsState(currentConfig, providerPoolManager, providerPools, options);
+    return result;
+}
+
+async function persistProviderRoutingMutations(currentConfig, providerPoolManager, providerPools, updates, options = {}) {
+    const runtimeStorage = getProviderMutationStorage(currentConfig);
+    if (!runtimeStorage) {
+        return await persistProviderPools(currentConfig, providerPoolManager, providerPools, options);
+    }
+
+    if (typeof runtimeStorage.updateProviderRoutingUuids === 'function') {
+        const result = await runtimeStorage.updateProviderRoutingUuids(updates);
+        syncProviderPoolsState(currentConfig, providerPoolManager, providerPools, options);
+        return result;
+    }
+
+    if (typeof runtimeStorage.updateProviderRoutingUuid !== 'function') {
+        return await persistProviderPools(currentConfig, providerPoolManager, providerPools, options);
+    }
+
+    for (const update of updates) {
+        await runtimeStorage.updateProviderRoutingUuid(update);
+    }
+    syncProviderPoolsState(currentConfig, providerPoolManager, providerPools, options);
+    return {
+        updatedCount: updates.length
+    };
 }
 
 function getProviderPoolsFilePath(currentConfig) {
@@ -551,7 +710,12 @@ export async function handleAddProvider(req, res, currentConfig, providerPoolMan
 
         providerPools[providerType].push(providerConfig);
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderEntryMutations(currentConfig, providerPoolManager, providerPools, [
+            {
+                providerType,
+                providerConfig
+            }
+        ]);
         logger.info(`[UI API] Added new provider to ${providerType}: ${providerConfig.uuid}`);
 
         // 广播更新事件
@@ -733,7 +897,15 @@ export async function handleBatchImportGrokTokens(req, res, currentConfig, provi
         }
 
         if (successCount > 0) {
-            await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+            await persistProviderEntryMutations(
+                currentConfig,
+                providerPoolManager,
+                providerPools,
+                addedProviders.map((providerConfig) => ({
+                    providerType: 'grok-custom',
+                    providerConfig
+                }))
+            );
 
             safeBroadcastEvent('config_update', {
                 action: 'grok_batch_import',
@@ -818,10 +990,16 @@ export async function handleUpdateProvider(req, res, currentConfig, providerPool
             errorCount: existingProvider.errorCount,
             lastErrorTime: existingProvider.lastErrorTime
         };
+        annotateProviderConfigId(updatedProvider, existingProvider.__providerId || null);
 
         providerPools[providerType][providerIndex] = updatedProvider;
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderEntryMutations(currentConfig, providerPoolManager, providerPools, [
+            {
+                providerType,
+                providerConfig: updatedProvider
+            }
+        ]);
         logger.info(`[UI API] Updated provider ${providerUuid} in ${providerType}`);
 
         // 广播更新事件
@@ -876,7 +1054,13 @@ export async function handleDeleteProvider(req, res, currentConfig, providerPool
             delete providerPools[providerType];
         }
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderDeletionMutations(currentConfig, providerPoolManager, providerPools, [
+            {
+                providerId: deletedProvider.__providerId || null,
+                providerType,
+                routingUuid: providerUuid
+            }
+        ]);
         logger.info(`[UI API] Deleted provider ${providerUuid} from ${providerType}`);
 
         // 广播更新事件
@@ -927,7 +1111,13 @@ export async function handleDisableEnableProvider(req, res, currentConfig, provi
         const provider = providers[providerIndex];
         provider.isDisabled = action === 'disable';
         
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderRuntimeStateMutations(
+            currentConfig,
+            providerPoolManager,
+            providerPools,
+            providerType,
+            [provider]
+        );
         logger.info(`[UI API] ${action === 'disable' ? 'Disabled' : 'Enabled'} provider ${providerUuid} in ${providerType}`);
 
         // 广播更新事件
@@ -987,7 +1177,13 @@ export async function handleResetProviderHealth(req, res, currentConfig, provide
             provider.lastErrorTime = null;
         });
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderRuntimeStateMutations(
+            currentConfig,
+            providerPoolManager,
+            providerPools,
+            providerType,
+            providers
+        );
         logger.info(`[UI API] Reset health status for ${resetCount} providers in ${providerType}`);
 
         // 广播更新事件
@@ -1086,9 +1282,19 @@ export async function handleDeleteUnhealthyProviders(req, res, currentConfig, pr
             providerPools[providerType] = remainingProviders;
         }
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools, {
-            managerProviderPools: providerPools
-        });
+        await persistProviderDeletionMutations(
+            currentConfig,
+            providerPoolManager,
+            providerPools,
+            providersToDelete.map((provider) => ({
+                providerId: provider.__providerId || null,
+                providerType,
+                routingUuid: provider?.uuid || null
+            })),
+            {
+                managerProviderPools: providerPools
+            }
+        );
         logger.info(`[UI API] Deleted ${providersToDelete.length} unhealthy providers from ${providerType} (errorType=${errorType})`);
 
         // 广播更新事件
@@ -1146,6 +1352,7 @@ export async function handleRefreshUnhealthyUuids(req, res, currentConfig, provi
                 const newUuid = generateUUID();
                 provider.uuid = newUuid;
                 refreshedProviders.push({
+                    providerId: provider.__providerId || null,
                     oldUuid,
                     newUuid,
                     customName: provider.customName
@@ -1164,7 +1371,17 @@ export async function handleRefreshUnhealthyUuids(req, res, currentConfig, provi
             return true;
         }
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderRoutingMutations(
+            currentConfig,
+            providerPoolManager,
+            providerPools,
+            refreshedProviders.map((provider) => ({
+                providerId: provider.providerId,
+                providerType,
+                oldRoutingUuid: provider.oldUuid,
+                newRoutingUuid: provider.newUuid
+            }))
+        );
         logger.info(`[UI API] Refreshed UUIDs for ${refreshedProviders.length} unhealthy providers in ${providerType}`);
 
         // 广播更新事件
@@ -1315,11 +1532,8 @@ export async function handleHealthCheck(req, res, currentConfig, providerPoolMan
         const filePath = getProviderPoolsFilePath(currentConfig);
         
         // 从 providerStatus 构建 providerPools 对象并持久化
-        const providerPools = {};
-        for (const pType in providerPoolManager.providerStatus) {
-            providerPools[pType] = providerPoolManager.providerStatus[pType].map(ps => ps.config);
-        }
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools, {
+        const providerPools = buildProviderPoolsFromManagerStatus(providerPoolManager);
+        await persistProviderRuntimeStateMutations(currentConfig, providerPoolManager, providerPools, providerType, unhealthyProviders.map(ps => ps.config), {
             reinitializeManager: false,
             managerProviderPools: providerPools
         });
@@ -1463,11 +1677,8 @@ export async function handleSingleProviderHealthCheck(req, res, currentConfig, p
         }
 
         const filePath = getProviderPoolsFilePath(currentConfig);
-        const providerPools = {};
-        for (const pType in providerPoolManager.providerStatus) {
-            providerPools[pType] = providerPoolManager.providerStatus[pType].map(ps => ps.config);
-        }
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools, {
+        const providerPools = buildProviderPoolsFromManagerStatus(providerPoolManager);
+        await persistProviderRuntimeStateMutations(currentConfig, providerPoolManager, providerPools, providerType, [providerStatus.config], {
             reinitializeManager: false,
             managerProviderPools: providerPools
         });
@@ -1536,7 +1747,14 @@ export async function handleRefreshProviderUuid(req, res, currentConfig, provide
         // Update provider UUID
         providerPools[providerType][providerIndex].uuid = newUuid;
 
-        await persistProviderPools(currentConfig, providerPoolManager, providerPools);
+        await persistProviderRoutingMutations(currentConfig, providerPoolManager, providerPools, [
+            {
+                providerId: providerPools[providerType][providerIndex].__providerId || null,
+                providerType,
+                oldRoutingUuid: oldUuid,
+                newRoutingUuid: newUuid
+            }
+        ]);
         logger.info(`[UI API] Refreshed UUID for provider in ${providerType}: ${oldUuid} -> ${newUuid}`);
 
         // 广播更新事件

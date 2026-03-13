@@ -7,7 +7,7 @@ import { t, getCurrentLanguage } from './i18n.js';
 import { renderRoutingExamples } from './routing-examples.js';
 import { updateModelsProviderConfigs } from './models-manager.js';
 import { updateTutorialProviderConfigs } from './tutorial-manager.js';
-import { updateUsageProviderConfigs } from './usage-manager.js';
+import { updateUsageProviderConfigs, updateUsageProviderSummaries } from './usage-manager.js';
 import { updateConfigProviderConfigs } from './config-manager.js';
 import { setServiceMode } from './event-handlers.js';
 
@@ -91,6 +91,37 @@ function formatRuntimeStorageDiagnostic(entry, fallback = '--') {
     return status;
 }
 
+function normalizeRuntimeStorageErrorLine(line) {
+    return String(line || '')
+        .replace(/^Runtime error near line \d+:\s*/i, '')
+        .trim();
+}
+
+function formatRuntimeStorageErrorMessage(message, fallback = '--') {
+    if (typeof message !== 'string' || message.trim() === '') {
+        return fallback;
+    }
+
+    const lines = message
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length === 0) {
+        return fallback;
+    }
+    if (lines.length === 1) {
+        return lines[0];
+    }
+
+    const normalizedLines = lines.map((line) => normalizeRuntimeStorageErrorLine(line) || line);
+    const uniqueNormalizedLines = Array.from(new Set(normalizedLines));
+    if (uniqueNormalizedLines.length === 1) {
+        return `${uniqueNormalizedLines[0]} (+${lines.length - 1} more)`;
+    }
+
+    return `${lines[0]} (+${lines.length - 1} more)`;
+}
+
 export function buildRuntimeStorageDiagnosticsViewModel(systemInfo = {}, options = {}) {
     const runtimeStorage = systemInfo?.runtimeStorage || {};
     const providerSummary = systemInfo?.providerSummary || {};
@@ -103,6 +134,10 @@ export function buildRuntimeStorageDiagnosticsViewModel(systemInfo = {}, options
     const providerCount = Number(providerSummary.providerCount) || 0;
     const lastValidation = runtimeStorage.lastValidation || null;
     const lastError = runtimeStorage.lastError || null;
+    const lastErrorRawMessage = typeof lastError?.error?.message === 'string'
+        ? lastError.error.message
+        : '';
+    const lastErrorMessage = formatRuntimeStorageErrorMessage(lastErrorRawMessage);
     const suggestedRunId = options.suggestedRunId
         || lastValidation?.runId
         || '';
@@ -111,12 +146,12 @@ export function buildRuntimeStorageDiagnosticsViewModel(systemInfo = {}, options
     if (error) {
         alert = {
             type: 'error',
-            message: `加载运行时存储诊断信息失败：${error.message}`
+            message: `加载运行时存储诊断信息失败：${formatRuntimeStorageErrorMessage(error.message, error.message)}`
         };
-    } else if (lastError?.error?.message) {
+    } else if (lastErrorRawMessage) {
         alert = {
             type: 'error',
-            message: `最近一次运行时存储错误：${lastError.error.message}`
+            message: `最近一次运行时存储错误：${lastErrorMessage}`
         };
     } else if (lastValidation && (lastValidation.overallStatus || lastValidation.status) && (lastValidation.overallStatus || lastValidation.status) !== 'pass') {
         alert = {
@@ -139,7 +174,8 @@ export function buildRuntimeStorageDiagnosticsViewModel(systemInfo = {}, options
         providerCount,
         diagnostics: {
             validation: formatRuntimeStorageDiagnostic(lastValidation),
-            lastErrorMessage: lastError?.error?.message || '--'
+            lastErrorMessage,
+            lastErrorRawMessage
         },
         suggestedRunId,
         actions: {
@@ -233,7 +269,10 @@ export function renderRuntimeStorageDiagnostics(viewModel, container = ensureRun
     if (sourceEl) sourceEl.textContent = viewModel.sourceOfTruthLabel;
     if (providerSummaryEl) providerSummaryEl.textContent = `${viewModel.providerTypeCount} 种类型 / ${viewModel.providerCount} 个提供商`;
     if (validationEl) validationEl.textContent = viewModel.diagnostics.validation;
-    if (errorEl) errorEl.textContent = viewModel.diagnostics.lastErrorMessage;
+    if (errorEl) {
+        errorEl.textContent = viewModel.diagnostics.lastErrorMessage;
+        errorEl.title = viewModel.diagnostics.lastErrorRawMessage || '';
+    }
 
     if (alertEl) {
         if (viewModel.alert) {
@@ -689,6 +728,7 @@ async function loadProvidersInternal(options = {}) {
             durationMs: Date.now() - startedAt,
             providerTypeCount: Object.keys(providers || {}).length
         });
+        updateUsageProviderSummaries(providers);
 
         // 动态更新其他模块的提供商信息，只需更新一次
         if (!isStaticProviderConfigsUpdated) {

@@ -9,7 +9,7 @@ WORKDIR /build
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
-ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.org
 ENV GOPROXY=${GOPROXY} \
     GOSUMDB=${GOSUMDB}
@@ -29,12 +29,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o tls-sidecar .
 
 # ── Stage 2: Node.js 应用 ──
-# 使用官方Node.js运行时作为基础镜像
-# 选择20-alpine版本以满足undici包的要求（需要Node.js >=20.18.1）
+# 使用官方 Node.js 运行时作为基础镜像
+# 选择 20-alpine 版本以满足 undici 包的要求（需要 Node.js >=20.18.1）
 FROM node:20-alpine
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="${PNPM_HOME}:${PATH}"
+ENV NODE_ENV=production
 
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
@@ -56,27 +57,26 @@ RUN corepack enable
 # 复制 package.json 和 pnpm 锁文件
 COPY package.json pnpm-lock.yaml ./
 
-# 安装依赖
-# 使用 --prod 只安装生产依赖，减小镜像大小
+# 安装依赖（使用 --prod 只安装生产依赖，减小镜像大小）
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store && \
     pnpm install --prod --frozen-lockfile
 
-# 复制源代码
-COPY . .
+# 复制源代码（只复制必要的目录，减小镜像大小）
+COPY src ./src
+COPY web ./web
+COPY healthcheck.js ./
 
 # 从 sidecar 构建阶段复制二进制
-# 放在 COPY . . 之后是为了确保不会被本地的空目录或旧二进制文件覆盖
 COPY --from=sidecar-builder /build/tls-sidecar /app/tls-sidecar/tls-sidecar
 RUN chmod +x /app/tls-sidecar/tls-sidecar
 
-USER root
-
-# 创建目录用于存储日志和系统提示文件
-RUN mkdir -p /app/logs
+# 创建目录用于存储日志和配置文件
+# 注意：实际的配置文件应通过 volume 挂载本地目录
+RUN mkdir -p /app/logs /app/configs/runtime
 
 # 暴露端口
-EXPOSE 3000 8085 8086 19876-19880
+EXPOSE 3000 8085-8087 1455 19876-19880
 
 # 添加健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

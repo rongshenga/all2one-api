@@ -15,12 +15,15 @@ const OPERATION_META = {
     loadProviderTypePage: { phase: 'read', domain: 'provider' },
     exportProviderPoolsSnapshot: { phase: 'export', domain: 'provider', trackKey: 'lastExport' },
     replaceProviderPoolsSnapshot: { phase: 'write', domain: 'provider', trackKey: 'lastMutation' },
+    upsertProviderPoolEntries: { phase: 'write', domain: 'provider', trackKey: 'lastMutation' },
+    deleteProviderPoolEntries: { phase: 'write', domain: 'provider', trackKey: 'lastMutation' },
     getCredentialSecretBlob: { phase: 'read', domain: 'provider' },
     upsertCredentialSecretBlob: { phase: 'write', domain: 'provider' },
     listCredentialExpiryCandidates: { phase: 'read', domain: 'provider' },
     linkCredentialFiles: { phase: 'write', domain: 'provider', trackKey: 'lastMutation' },
     flushProviderRuntimeState: { phase: 'flush', domain: 'provider', trackKey: 'lastFlush' },
     updateProviderRoutingUuid: { phase: 'flush', domain: 'provider', trackKey: 'lastFlush' },
+    updateProviderRoutingUuids: { phase: 'flush', domain: 'provider', trackKey: 'lastFlush' },
     loadUsageCacheSnapshot: { phase: 'read', domain: 'usage' },
     loadUsageCacheSummary: { phase: 'read', domain: 'usage' },
     replaceUsageCacheSnapshot: { phase: 'write', domain: 'usage' },
@@ -103,6 +106,18 @@ function summarizeResult(operation, result) {
         };
     }
 
+    if (operation === 'upsertProviderPoolEntries') {
+        return {
+            upsertedCount: result.upsertedCount ?? 0
+        };
+    }
+
+    if (operation === 'deleteProviderPoolEntries') {
+        return {
+            deletedCount: result.deletedCount ?? 0
+        };
+    }
+
     if (operation === 'linkCredentialFiles') {
         return {
             totalNewProviders: result.totalNewProviders ?? 0
@@ -112,6 +127,12 @@ function summarizeResult(operation, result) {
     if (operation === 'updateProviderRoutingUuid') {
         return {
             updated: result.updated === true
+        };
+    }
+
+    if (operation === 'updateProviderRoutingUuids') {
+        return {
+            updatedCount: result.updatedCount ?? 0
         };
     }
 

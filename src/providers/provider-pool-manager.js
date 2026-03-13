@@ -87,6 +87,7 @@ export class ProviderPoolManager {
         this.pendingRoutingUuidUpdates = new Map(); // 记录待持久化的 routing uuid 变更
         this.flushInFlight = null;
         this.lastFlushSummary = null;
+        this.runtimeMutationEpoch = 0; // 快照替换后作废旧 flush/retry，避免回灌过期 provider_id
         
         // Fallback 链配置
         this.fallbackChain = options.globalConfig?.providerFallbackChain || {};
@@ -373,6 +374,39 @@ export class ProviderPoolManager {
             requestedBy: options.requestedBy || null,
             forceAll: options.forceAll === true
         });
+    }
+
+    /**
+     * 丢弃已被整份 provider 快照替代的待持久化 runtime 变更
+     * @param {string} reason - 丢弃原因
+     * @returns {{droppedSaveCount: number, droppedRoutingCount: number, epoch: number}}
+     */
+    discardPendingRuntimeMutations(reason = 'manual') {
+        const droppedSaveCount = this.pendingSaves.size;
+        const droppedRoutingCount = this.pendingRoutingUuidUpdates.size;
+
+        this.runtimeMutationEpoch += 1;
+
+        if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+        }
+
+        this.pendingSaves.clear();
+        this.pendingRoutingUuidUpdates.clear();
+
+        if (droppedSaveCount > 0 || droppedRoutingCount > 0) {
+            this._log(
+                'debug',
+                `Discarded pending runtime mutations: saves=${droppedSaveCount}, routing=${droppedRoutingCount}, reason=${reason}`
+            );
+        }
+
+        return {
+            droppedSaveCount,
+            droppedRoutingCount,
+            epoch: this.runtimeMutationEpoch
+        };
     }
 
     /**
@@ -2973,6 +3007,8 @@ export class ProviderPoolManager {
         this.pendingSaves.clear();
         this.pendingRoutingUuidUpdates.clear();
 
+        const flushEpoch = this.runtimeMutationEpoch;
+
         this.flushInFlight = (async () => {
             let nextRetryDelayMs = null;
             const flushReason = options.reason || 'scheduled';
@@ -3046,12 +3082,19 @@ export class ProviderPoolManager {
                     flushReason
                 };
             } catch (error) {
-                nextRetryDelayMs = this.runtimeFlushRetryDelayMs;
-                for (const entry of pendingSaveEntries) {
-                    this.pendingSaves.set(`${entry.providerType}::${entry.providerId}`, entry);
-                }
-                for (const routingUpdate of pendingRoutingUpdates) {
-                    this.pendingRoutingUuidUpdates.set(routingUpdate.providerId, routingUpdate);
+                if (this.runtimeMutationEpoch === flushEpoch) {
+                    nextRetryDelayMs = this.runtimeFlushRetryDelayMs;
+                    for (const entry of pendingSaveEntries) {
+                        this.pendingSaves.set(`${entry.providerType}::${entry.providerId}`, entry);
+                    }
+                    for (const routingUpdate of pendingRoutingUpdates) {
+                        this.pendingRoutingUuidUpdates.set(routingUpdate.providerId, routingUpdate);
+                    }
+                } else {
+                    this._log(
+                        'warn',
+                        `Dropped failed runtime flush retry because provider snapshot already superseded this batch (reason=${flushReason})`
+                    );
                 }
                 this.lastFlushSummary = {
                     status: 'failed',
