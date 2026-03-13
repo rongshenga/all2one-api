@@ -9,7 +9,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/aiclient-2-api
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/all2one-api
 
 jobs:
   build-and-push:

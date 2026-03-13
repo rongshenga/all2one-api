@@ -41,8 +41,8 @@ ARG HTTPS_PROXY
 ARG NO_PROXY
 
 # 设置标签
-LABEL maintainer="AIClient2API Team"
-LABEL description="Docker image for AIClient2API server"
+LABEL maintainer="All2One API Team"
+LABEL description="Docker image for All2One API server"
 
 # 安装必要的系统工具（tar 用于更新功能，git 用于版本检查，sqlite 提供 sqlite3 CLI）
 RUN apk add --no-cache tar git sqlite

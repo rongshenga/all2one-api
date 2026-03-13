@@ -2,8 +2,8 @@
 const translations = {
     'zh-CN': {
         // Header
-        'header.title': 'AIClient2API 管理控制台',
-        'header.description': 'AIClient2API 管理控制台 - 统一管理 AI 服务提供商',
+        'header.title': 'All2One API 管理控制台',
+        'header.description': 'All2One API 管理控制台 - 统一管理 AI 服务提供商',
         'header.themeToggle': '切换主题',
         'header.status.connecting': '连接中...',
         'header.status.connected': '已连接',
@@ -733,7 +733,7 @@ const translations = {
         'common.found': '已找到',
         'common.missing': '缺失',
         'common.search': '搜索',
-        'common.welcome': '欢迎使用AIClient2API管理控制台！',
+        'common.welcome': '欢迎使用 All2One API 管理控制台！',
         'common.fileType': '不支持的文件类型，请选择 JSON、TXT、KEY、PEM、P12 或 PFX 文件',
         'common.fileSize': '文件大小不能超过 5MB',
         'common.uploadSuccess': '文件上传成功',
@@ -748,7 +748,7 @@ const translations = {
         'common.refresh.failed': '刷新失败',
         
         // Login
-        'login.title': '登录 - AIClient2API',
+        'login.title': '登录 - All2One API',
         'login.heading': '请登录以继续',
         'login.password': '密码',
         'login.passwordPlaceholder': '请输入密码',

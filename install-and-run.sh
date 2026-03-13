@@ -5,7 +5,7 @@ export LC_ALL=zh_CN.UTF-8
 export LANG=zh_CN.UTF-8
 
 echo "========================================"
-echo "  AI Client 2 API 快速安装启动脚本"
+echo "  All2One API 快速安装启动脚本"
 echo "========================================"
 echo
 
@@ -92,7 +92,7 @@ echo "[成功] 项目文件检查完成"
 # 启动应用程序
 echo
 echo "========================================"
-echo "  启动AIClient2API服务器..."
+echo "  启动 All2One API 服务器..."
 echo "========================================"
 echo
 echo "服务器将在 http://localhost:${APP_PORT} 启动"

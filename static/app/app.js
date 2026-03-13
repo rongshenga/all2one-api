@@ -277,4 +277,4 @@ window.togglePlugin = togglePlugin;
 // 导出调试函数
 window.getProviderStats = () => getProviderStats(providerStats);
 
-console.log('AIClient2API 管理控制台已加载 - 模块化版本');
+console.log('All2One API 管理控制台已加载 - 模块化版本');

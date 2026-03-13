@@ -1,9 +1,9 @@
 services:
-  aiclient-api:
+  all2one-api:
     # 方式一：使用 Docker Hub 预构建镜像（默认，推荐）
     # 使用方法: docker compose up -d
-    image: justlikemaki/aiclient-2-api:latest
-    container_name: aiclient2api
+    image: justlikemaki/all2one-api:latest
+    container_name: all2one-api
     restart: unless-stopped
     ports:
       - "3000:3000"

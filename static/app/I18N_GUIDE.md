@@ -20,7 +20,7 @@
 使用 `data-i18n`、`data-i18n-placeholder`、`data-i18n-title`、`data-i18n-aria-label` 标记需要替换的内容：
 
 ```html
-<h1 data-i18n="header.title">AIClient2API 管理控制台</h1>
+<h1 data-i18n="header.title">All2One API 管理控制台</h1>
 <button data-i18n="common.save">保存</button>
 <input data-i18n-placeholder="config.apiKeyPlaceholder" placeholder="请输入 API 密钥">
 ```

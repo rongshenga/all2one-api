@@ -1,5 +1,5 @@
 services:
-  aiclient-api:
+  all2one-api:
     # 方式二：从 Dockerfile 本地构建
     # 使用方法: docker compose -f docker-compose.build.yml up -d --build
     build:
@@ -11,7 +11,7 @@ services:
         HTTP_PROXY: ${DOCKER_HTTP_PROXY:-}
         HTTPS_PROXY: ${DOCKER_HTTPS_PROXY:-}
         NO_PROXY: ${DOCKER_NO_PROXY:-localhost,127.0.0.1}
-    container_name: aiclient2api
+    container_name: all2one-api
     restart: unless-stopped
     ports:
       - "3000:3000"

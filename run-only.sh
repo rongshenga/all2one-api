@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "========================================"
-echo "  AI Client 2 API 快速启动脚本(免安装)"
+echo "  All2One API 快速启动脚本(免安装)"
 echo "========================================"
 echo
 
@@ -68,7 +68,7 @@ fi
 
 echo
 echo "========================================"
-echo "  启动 AIClient2API 服务器..."
+echo "  启动 All2One API 服务器..."
 echo "========================================"
 echo
 echo "服务器将在 http://localhost:${APP_PORT} 启动"
