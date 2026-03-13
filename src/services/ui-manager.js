@@ -96,7 +96,12 @@ export async function serveStaticFiles(pathParam, res, currentConfig = {}) {
             return String(pathParam || '/').split('?')[0];
         }
     })();
-    const filePath = path.join(process.cwd(), 'static', normalizedPath === '/' || normalizedPath === '/index.html' ? 'index.html' : normalizedPath.replace('/static/', ''));
+    const resolvedPath = normalizedPath === '/favicon.ico'
+        ? 'favicon.svg'
+        : normalizedPath === '/' || normalizedPath === '/index.html'
+            ? 'index.html'
+            : normalizedPath.replace('/static/', '');
+    const filePath = path.join(process.cwd(), 'static', resolvedPath);
 
     if (existsSync(filePath)) {
         const ext = path.extname(filePath);
