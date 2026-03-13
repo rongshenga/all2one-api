@@ -350,10 +350,10 @@ body {
 .main-content {
     display: flex;
     flex: 1;
-    max-width: 1600px;
+    max-width: none;
     width: 100%;
     margin: 0 auto;
-    padding: 1.5rem 1.5rem 1.5rem 0.75rem;
+    padding: 1.5rem;
     gap: 1.5rem;
 }
 

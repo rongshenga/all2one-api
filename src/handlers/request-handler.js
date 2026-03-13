@@ -269,7 +269,7 @@ export function createRequestHandler(config, options = {}) {
         // 检查是否是插件静态文件
         const pluginManager = getPluginManager();
         const isPluginStatic = pluginManager.isPluginStaticPath(path);
-        if (path.startsWith('/static/') || path === '/' || path === '/favicon.ico' || path === '/index.html' || path.startsWith('/app/') || path.startsWith('/components/') || path === '/login.html' || isPluginStatic) {
+        if (path.startsWith('/static/') || path === '/' || path === '/favicon.ico' || path === '/index.html' || path.startsWith('/app/') || path.startsWith('/components/') || path.startsWith('/vendor/') || path === '/login.html' || isPluginStatic) {
             const served = await serveStaticFiles(path, res, currentConfig);
             if (served) return;
         }

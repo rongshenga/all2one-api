@@ -10,7 +10,15 @@
     <link rel="icon" type="image/svg+xml" sizes="any" href="/static/favicon.svg?v=orbit-core-svg-primary">
     <link rel="stylesheet" href="app/base.css">
     <link rel="stylesheet" href="app/mobile.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="vendor/font-awesome/6.4.0/css/svg-with-js.min.css">
+    <script>
+        window.FontAwesomeConfig = {
+            autoAddCss: false,
+            autoReplaceSvg: 'nest',
+            observeMutations: false
+        };
+    </script>
+    <script defer src="vendor/font-awesome/6.4.0/js/all.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -41,6 +49,7 @@
     <script type="module">
         // 导入组件加载器
         import { initializeComponents } from './app/component-loader.js';
+        import { initIcons, renderIcons } from './app/icons.js';
         // 导入多语言、主题切换和认证函数
         import { initI18n, t } from './app/i18n.js';
         import { initThemeSwitcher, setTheme, getCurrentTheme } from './app/theme-switcher.js';
@@ -61,8 +70,11 @@
             console.log('用户已认证');
             
             try {
+                await initIcons();
+
                 // 加载所有组件
                 await initializeComponents();
+                await renderIcons(document.body);
                 
                 // 组件加载完成后初始化主题切换器（此时按钮已存在于DOM中）
                 initThemeSwitcher();

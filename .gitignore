@@ -29,3 +29,4 @@ tls-sidecar/tls-sidecar.exe
 configs/config.json
 configs/runtime/
 openspec/
+.gemini-clipboard/
